@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pyrite Plugin Creator"
+  short_description: "Create and debug PyriteIDE plugins"
+  default_prompt: "Use $pyrite-plugin-creator to create or refine a PyriteIDE plugin with the PyriteSDK package from PyPI."
