@@ -86,7 +86,10 @@ Boolean permissions normally expand to all standard actions for that resource. I
 Typical imports:
 
 ```python
-from pyrite_sdk.api.ui import *
+from pyrite_sdk.api.ui.event import Event
+from pyrite_sdk.api.ui.page import Page
+from pyrite_sdk.api.ui.sentence import *
+from pyrite_sdk.api.ui.widgets import *
 from pyrite_sdk.core.plugin import UiPlugin
 from pyrite_sdk.models.consts import Package, PathScope, Ui
 ```
@@ -94,12 +97,12 @@ from pyrite_sdk.models.consts import Package, PathScope, Ui
 Page construction pattern:
 
 ```python
-page = Page(packages=[Package.core.widgets, Package.core.material])
+page = Page([Package.core.widgets, Package.core.material])
 root = NewWidget(Ui.root).add_to(page)
-scaffold = Scaffold(app_bar=AppBar(title=Text("Title"))).add_to(root)
-body = SafeArea().add_to(scaffold)
-content = Padding(EdgeInsets.all(12)).add_to(body)
-Column(cross_axis_alignment=CrossAxisAlignment.stretch).add_to(content).add(Text("Hello"))
+with Scaffold(app_bar=AppBar(title=Text("Title"))).add_to(root)\
+    .add(Padding(EdgeInsets.all(12)))\
+    .add(Column(cross_axis_alignment=CrossAxisAlignment.stretch)):
+    Text("Hello")
 return page
 ```
 
@@ -120,7 +123,7 @@ TextField(
     on_changed=Event(lambda value="", **_: plugin.bridge.let(data.prompt, value)),
 )
 ElevatedButton(
-    on_pressed=Event(lambda prompt="", **_: plugin.send(prompt), args={"prompt": data.prompt})
+    Event(lambda prompt="", **_: plugin.send(prompt), args={"prompt": data.prompt})
 ).add(Text("Send"))
 ```
 
@@ -203,7 +206,3 @@ Common options:
 - `--pip-tool uv|pip`
 
 The plugin ZIP root must contain `plugin.toml` and `__main__.py`.
-
-## Documentation Notes
-
-Prefer published documentation and runtime smoke tests over copied snippets from old examples. If older snippets use synchronous-looking calls, raw widget names such as `Button`, or raw `onPressed`, rewrite them with current SDK wrappers such as `ElevatedButton(on_pressed=Event(...))`.

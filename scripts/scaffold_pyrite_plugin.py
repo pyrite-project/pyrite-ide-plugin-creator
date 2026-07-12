@@ -91,24 +91,25 @@ def build_plugin_toml(args: argparse.Namespace, permissions: list[str], platform
 def ui_template(class_name: str, display_name: str) -> str:
     return dedent(
         f'''
-        from pyrite_sdk.api.ui import *
+        from pyrite_sdk.api.ui.event import Event
+        from pyrite_sdk.api.ui.page import Page
+        from pyrite_sdk.api.ui.sentence import *
+        from pyrite_sdk.api.ui.widgets import *
         from pyrite_sdk.core.plugin import UiPlugin
         from pyrite_sdk.models.consts import Package, Ui
 
 
-        def build_home_page(status: str):
-            page = Page(packages=[Package.core.widgets, Package.core.material])
+        def build_home_page(plugin: UiPlugin, status: str):
+            page = Page([Package.core.widgets, Package.core.material])
             root = NewWidget(Ui.root).add_to(page)
-            scaffold = Scaffold(app_bar=AppBar(title=Text("{display_name}"))).add_to(root)
-            body = SafeArea().add_to(scaffold)
-            content = Padding(EdgeInsets.all(12)).add_to(body)
-            column = Column(cross_axis_alignment=CrossAxisAlignment.stretch).add_to(content)
-            column.add(Text("{display_name}", style=TextStyle(font_size=20, font_weight=FontWeight.bold)))
-            Padding(EdgeInsets.only(top=8)).add_to(column).add(Text(["Status: ", status]))
-            with Padding(EdgeInsets.only(top=12)).add_to(column):
-                row = Row(cross_axis_alignment=CrossAxisAlignment.center)
-                button = ElevatedButton(on_pressed=Event(lambda **_: plugin.set_status("Clicked"))).add_to(row)
-                button.add(Text("Run"))
+            with Scaffold(app_bar=AppBar(title=Text("{display_name}"))).add_to(root)\\
+                .add(Padding(EdgeInsets.all(12)))\\
+                .add(Column(cross_axis_alignment=CrossAxisAlignment.stretch)):
+                Text("{display_name}", style=TextStyle(font_size=20, font_weight=FontWeight.bold))
+                Padding(EdgeInsets.only(top=8)).add(Text(["Status: ", status]))
+                Padding(EdgeInsets.only(top=12))
+                with Row(cross_axis_alignment=CrossAxisAlignment.center):
+                    ElevatedButton(Event(lambda **_: plugin.set_status("Clicked"))).add_to(Expanded()).add(Text("Run"))
             return page
 
 
@@ -127,7 +128,7 @@ def ui_template(class_name: str, display_name: str) -> str:
                 self._render()
 
             def _render(self):
-                self.pages = {{"home": build_home_page(self.status)}}
+                self.pages = {{"home": build_home_page(self, self.status)}}
 
             def set_status(self, value: str):
                 self.status = value

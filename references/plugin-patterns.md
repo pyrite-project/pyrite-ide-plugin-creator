@@ -13,24 +13,25 @@ Use these patterns as starting points. Prefer editing existing examples over cop
 ## UI Plugin Skeleton
 
 ```python
-from pyrite_sdk.api.ui import *
+from pyrite_sdk.api.ui.event import Event
+from pyrite_sdk.api.ui.page import Page
+from pyrite_sdk.api.ui.sentence import *
+from pyrite_sdk.api.ui.widgets import *
 from pyrite_sdk.core.plugin import UiPlugin
 from pyrite_sdk.models.consts import Package, Ui
 
 
-def build_home_page(title: str, status: str):
-    page = Page(packages=[Package.core.widgets, Package.core.material])
+def build_home_page(plugin: UiPlugin, title: str, status: str):
+    page = Page([Package.core.widgets, Package.core.material])
     root = NewWidget(Ui.root).add_to(page)
-    scaffold = Scaffold(app_bar=AppBar(title=Text(title))).add_to(root)
-    body = SafeArea().add_to(scaffold)
-    content = Padding(EdgeInsets.all(12)).add_to(body)
-    column = Column(cross_axis_alignment=CrossAxisAlignment.stretch).add_to(content)
-    column.add(Text(title, style=TextStyle(font_size=18, font_weight=FontWeight.bold)))
-    Padding(EdgeInsets.only(top=8)).add_to(column).add(Text(["状态：", status], soft_wrap=True))
-    with Padding(EdgeInsets.only(top=12)).add_to(column):
-        row = Row(cross_axis_alignment=CrossAxisAlignment.center)
-        button = ElevatedButton(on_pressed=Event(lambda **_: plugin.set_status("已点击"))).add_to(row)
-        button.add(Text("运行"))
+    with Scaffold(app_bar=AppBar(title=Text(title))).add_to(root)\
+        .add(Padding(EdgeInsets.all(12)))\
+        .add(Column(cross_axis_alignment=CrossAxisAlignment.stretch)):
+        Text(title, style=TextStyle(font_size=18, font_weight=FontWeight.bold))
+        Padding(EdgeInsets.only(top=8)).add(Text(["状态：", status], soft_wrap=True))
+        Padding(EdgeInsets.only(top=12))
+        with Row(cross_axis_alignment=CrossAxisAlignment.center):
+            ElevatedButton(Event(lambda **_: plugin.set_status("已点击"))).add_to(Expanded()).add(Text("运行"))
     return page
 
 
@@ -49,7 +50,7 @@ class MyPlugin(UiPlugin):
         self._render()
 
     def _render(self):
-        self.pages = {"home": build_home_page("My Plugin", self.status)}
+        self.pages = {"home": build_home_page(self, "My Plugin", self.status)}
 
     def set_status(self, value: str):
         self.status = value
@@ -80,37 +81,33 @@ Notes:
 
 ```python
 def build_settings_page(api_url: str, api_key: str):
-    page = Page(packages=[Package.core.widgets, Package.core.material])
+    page = Page([Package.core.widgets, Package.core.material])
     root = NewWidget(Ui.root).add_to(page)
-    scaffold = Scaffold(app_bar=AppBar(title=Text("设置"))).add_to(root)
-    body = SafeArea().add_to(scaffold)
-    scroll = SingleChildScrollView(padding=EdgeInsets.all(14)).add_to(body)
-    column = Column(cross_axis_alignment=CrossAxisAlignment.stretch).add_to(scroll)
-    column.add(
+    with Scaffold(app_bar=AppBar(title=Text("设置"))).add_to(root)\
+        .add(SingleChildScrollView(padding=EdgeInsets.all(14)))\
+        .add(Column(cross_axis_alignment=CrossAxisAlignment.stretch)):
         TextField(
             value=data.settings_url,
             initial_value=api_url,
             decoration=call("InputDecoration", label_text="API 地址", is_dense=True),
             on_changed=Event(lambda value="", **_: plugin.bridge.let(data.settings_url, value)),
         )
-    )
-    Padding(EdgeInsets.only(top=16)).add_to(column).add(
-        TextField(
-            value=data.settings_api_key,
-            initial_value=api_key,
-            decoration=call("InputDecoration", label_text="API Key", is_dense=True),
-            obscure_text=True,
-            on_changed=Event(lambda value="", **_: plugin.bridge.let(data.settings_api_key, value)),
+        Padding(EdgeInsets.only(top=16)).add(
+            TextField(
+                value=data.settings_api_key,
+                initial_value=api_key,
+                decoration=call("InputDecoration", label_text="API Key", is_dense=True),
+                obscure_text=True,
+                on_changed=Event(lambda value="", **_: plugin.bridge.let(data.settings_api_key, value)),
+            )
         )
-    )
-    with Padding(EdgeInsets.only(top=16)).add_to(column):
-        button = ElevatedButton(
+        Padding(EdgeInsets.only(top=16))
+        ElevatedButton(
             on_pressed=Event(
                 lambda url="", api_key="", **_: plugin.save_settings(url, api_key),
                 args={"url": data.settings_url, "api_key": data.settings_api_key},
             )
-        )
-        button.add(Text("保存"))
+        ).add(Text("保存"))
     return page
 ```
 
@@ -365,23 +362,10 @@ from pyrite_sdk.models.consts import PathScope
 self.path.get(PathScope.ASSETS, callback=lambda **resp: self._load_assets(resp.get("path") or resp.get("data")))
 ```
 
-## AI Chat Plugin Lessons
-
-When building an OpenAI-compatible chat plugin:
-
-- Use a settings page for URL, API key, model, TLS verification, URL auto-processing, thinking/reasoning options, and user-controlled markdown code font.
-- Do not hardcode provider-specific behavior unless the user asked for it. If a field such as `reasoning_effort` is provider-specific, make it optional or configurable.
-- Stream SSE carefully and show `reasoning_content` in a collapsible card when returned.
-- Keep message history and send prior turns for context memory.
-- If applying AI-generated diffs, use a standard unified diff parser such as `patch-ng`, validate against the current file before writing, and keep the original diff card visible after validation.
-- If a request returns an HTML Cloudflare page, diagnose proxy/WAF/URL issues separately from API key or model issues.
-
 ## Pitfalls
 
 - Do not instantiate or start the plugin during normal imports.
-- Do not split a plugin into package imports unless the installed plugin layout supports those imports.
-- Do not assume docs using raw `Button`, raw `onPressed`, or synchronous return values match the current SDK.
 - Do not put multiple direct children in single-child widgets.
 - Do not mutate `pages` without refreshing when UI structure should update.
 - Do not set broad permissions by default.
-- Do not assume callback payload keys; inspect wrappers and live responses.
+- Do not assume callback `payload` keys; inspect wrappers and live responses.
