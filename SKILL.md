@@ -36,6 +36,7 @@ python path/to/pyrite-plugin-creator/scripts/init_environment.py --output ./my-p
 ```
 
 Useful option:
+
 - `--find_links /path/to/dir` to install `pyrite-sdk` with whl instead of PyPI. (is `--find_links`, not `--find-links`)
 
 ## Scaffolding
@@ -67,6 +68,7 @@ Useful options:
 - Use Python SDK wrappers, not raw Flutter/Dart assumptions. If an attribute fails, inspect `/path/to/venv-libs/pyrite_sdk/api/ui/sentence/expression.py` or the widget wrapper.
 
 ## Notice
+
 - Minimize or avoid using custom parsers as a replacement for the SDK's exposed configuration options unless necessary.
 - Never modify any source code of the SDK.
 
@@ -85,6 +87,7 @@ PY
 
 If the plugin has UI pages and the entrypoint is import-safe, also serialize pages with `page.to_rfw()` or a small smoke test. When SDK/IDE host widgets are changed, also run the matching Flutter widget test in the PyriteIDE repo.
 k lambdas are evaluated when building the page; ensure constants are in scope and defaults are literal-safe.
+
 - `Too many child in XXX`: a single-child widget received multiple direct children. Wrap the generated content in a `Column` or `Row`.
 - `Expected state but found data`: do not emit raw `set data...` statements in RFW; update data from Python with `plugin.bridge.let(...)`.
 - UI state does not refresh: rebuild the page and call `self.bridge.refresh(call_on_refresh=False)`.
