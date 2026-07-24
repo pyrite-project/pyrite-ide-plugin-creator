@@ -20,12 +20,12 @@ Use this skill to build PyriteIDE plugins with PyriteSDK. Treat the SDK repo and
    - Use `DataPlugin` for theme, i18n, stubs, and one-shot contributions.
 4. Align `plugin.toml` with the code. Add only permissions the plugin actually uses; verify uncertain permissions against `docs/api.md` or host permission code.
 5. Implement in Python SDK style:
-   - Use snake_case names exactly as exposed by the SDK, such as `Alignment.top_center`, not Dart-style names.
+   - Use snake_case names exactly as exposed by the SDK, such as `Alignment.top_center`, NOT Dart-style names.
    - Use `Event(callback, args={...})` for callbacks and accept `**kwargs`.
    - Use `plugin.bridge.let(data.some_key, value)` for dynamic UI values; rebuild `self.pages[...]` and call `self.bridge.refresh(call_on_refresh=False)` when page structure changes.
    - Put `plugin.start()` or `plugin.run_once()` inside `main()` so imports and tests stay safe.
-6. Validate locally. Do not call `plugin.start()` outside PyriteIDE unless the required bridge environment is set.
-7. Package with `pyrsdk [/path/to/plugin] -p [Platform] (-r "--find-links=/path/to/dir")` explicitly does not need it
+6. Validate locally. Do not call `plugin.start()` outside PyriteIDE unless the required bridge environment is set.You can run `pyrsdk test --rfw --raw-output` to check completeness and get the RFW text of each page.
+7. Package with `pyrsdk package [/path/to/plugin] -p [Platform] (-r "--find-links=/path/to/dir")` explicitly does not need it
 
 ## Environment
 
@@ -63,14 +63,17 @@ Useful options:
 ## UI Guardrails
 
 - Build actual plugin pages, not landing pages.
-- Prefer compact, native-feeling layouts with `Padding`, `margin`, `Card`, `Column`, and `Row`; avoid spacer-only `SizedBox` unless source examples prove it is needed.
+- Prefer compact, native-feeling layouts with `Padding`, `margin`, `Card`, `Column`, `Row` and `SizedBox`.
 - Remember RFW single-child widgets: `Padding`, `Container`, `Expanded`, `SafeArea`, `Center`, `Align`, and button widgets can only receive one direct child. Wrap multiple children in `Column`, `Row`, or another multi-child widget.
 - Use Python SDK wrappers, not raw Flutter/Dart assumptions. If an attribute fails, inspect `/path/to/venv-libs/pyrite_sdk/api/ui/sentence/expression.py` or the widget wrapper.
 
 ## Notice
 
 - Minimize or avoid using custom parsers as a replacement for the SDK's exposed configuration options unless necessary.
-- Never modify any source code of the SDK.
+- If possible, try to use Padding instead of other components to create spacing.
+- `parent.add(child)` will return `child`, not `parent`, and `parent.add_to(child)` will return `parent`. Therefore, for adding spacing outside the button, you should use `TextButton.add_to(Padding()).add(Text())`, not `Padding().add(TextButton().add(Text()))`.
+- It is better to use a float to define spacing.
+- NEVER modify ANY source code of the SDK.
 
 ## Validation
 
@@ -85,7 +88,7 @@ print(tomllib.loads(pathlib.Path("/path/to/plugin/plugin.toml").read_text()))
 PY
 ```
 
-If the plugin has UI pages and the entrypoint is import-safe, also serialize pages with `page.to_rfw()` or a small smoke test. When SDK/IDE host widgets are changed, also run the matching Flutter widget test in the PyriteIDE repo.
+If the plugin has UI pages and the entrypoint is import-safe, also serialize pages with `pyrsdk test --rfw --raw-output` or a small smoke test. When SDK/IDE host widgets are changed, also run the matching Flutter widget test in the PyriteIDE repo.
 k lambdas are evaluated when building the page; ensure constants are in scope and defaults are literal-safe.
 
 - `Too many child in XXX`: a single-child widget received multiple direct children. Wrap the generated content in a `Column` or `Row`.
