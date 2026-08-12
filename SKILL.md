@@ -1,176 +1,72 @@
 ---
 name: pyrite-ide-plugin-creator
-description: "Create, modify, debug, package, and validate PyriteIDE plugins built with PyriteSDK in Python. Use when needs to scaffold or edit Pyrite plugins, plugin.toml manifests, UiPlugin/ServicePlugin/DataPlugin code, RFW UI pages, plugin settings, persistence, file/board/editor/serial APIs, markdown widgets, assets_path usage, permissions, or pyrsdk packaging."
+description: Create, modify, debug, package, and validate third-party PyriteIDE plugins in Python with pyrite-sdk package. Use only for plugin work involving plugin.toml Manifest v2, UiPlugin/ServicePlugin/DataPlugin lifecycles, native views and component UI, commands, configuration, events, persistence, editor/file/board/serial/runtime APIs, resources, permissions, or pyrsdk tooling. Do not use when changing the PyriteSDK package itself or the PyriteIDE host/runtime implementation.
 ---
 
-# Pyrite IDE Plugin Creator
+# PyriteIDE Plugin Creator
 
-Use this skill to build PyriteIDE plugins with PyriteSDK. Treat the SDK repo and PyriteIDE host source as the source of truth; this stack changes quickly, and some docs or old examples use stale API shapes.
+Build plugins against the public `pyrite-sdk` 1.x contract. Keep every change inside the plugin project. Use the bundled references as the working API guide and never handcraft the private transport protocol.
 
 ## Workflow
 
-1. Prepare an environment (See in the `## Environment`).
-2. Read only the needed reference:
-   - Read `references/sdk-reference.md` for verified source paths, runtime behavior, permissions, validation, and packaging.
-   - Read `references/plugin-patterns.md` when creating or heavily restructuring a plugin.
-   - Inspect current source and examples before relying on docs: `src/pyrite_sdk`, `examples/*_plugin`, `tests/test_ui_api.py`, and when host behavior matters, the PyriteIDE RFW widget bridge/tests.
+1. Inspect the target plugin before editing. Read `plugin.toml`, the Python entrypoint, requirements, assets, tests, and the current Git diff.
+2. Install the SDK from PyPI when the environment is missing. Use `scripts/init_environment.py` to create a virtual environment with `pyrite-sdk` installed. Activate the environment before editing or testing.
 3. Classify the plugin:
-   - Use `UiPlugin` for pages, controls, chat tools, editor/file actions, and RFW events.
-   - Use `ServicePlugin` for background work without pages.
-   - Use `DataPlugin` for theme, i18n, stubs, and one-shot contributions.
-4. Align `plugin.toml` with the code. Add only permissions the plugin actually uses; verify uncertain permissions against `docs/api.md` or host permission code.
-5. Implement in Python SDK style:
-   - Use snake_case names exactly as exposed by the SDK, such as `Alignment.top_center`, NOT Dart-style names.
-   - Use `Event(callback, args={...})` for callbacks and accept `**kwargs`.
-   - Use `plugin.bridge.let(data.some_key, value)` for dynamic UI values; rebuild `self.pages[...]` and call `self.bridge.refresh(call_on_refresh=False)` when page structure changes.
-   - Put `plugin.start()` or `plugin.run_once()` inside `main()` so imports and tests stay safe.
-6. Validate locally. Do not call `plugin.start()` outside PyriteIDE unless the required bridge environment is set.You can run `pyrsdk test --rfw --raw-output` to check completeness and get the RFW text of each page.
-7. Package with `pyrsdk package [/path/to/plugin] -p [Platform] (-r "--find-links=/path/to/dir")` explicitly does not need it
+   - Use `UiPlugin` for contributed views, tabs, interactive components, editor tools, or visible commands.
+   - Use `ServicePlugin` for host-activated background behavior without contributed UI.
+   - Use `DataPlugin` for one-shot theme, localization, or stubs contributions.
+4. Read the references required by the task:
+   - `references/manifest-v2.md`: read whenever creating or changing `plugin.toml`, contributions, permissions, activation, icons, platforms, or `when` expressions.
+   - `references/communication-lifecycle.md`: read for startup, callbacks, async handlers, context, disposal, transport failures, or reconnect behavior.
+   - `references/ui-views.md`: read for any contributed view, typed native renderer, snapshot, patch, visibility, routing, tab instance, or context-menu behavior.
+   - `references/ui-components.md`: read before using component trees, component events/controllers, menus, media, data components, or Canvas.
+   - `references/ui-examples.md`: read when implementing UI. Keep UI examples out of this file.
+   - `references/sdk-operations.md`: read before calling an SDK namespace or choosing a permission. It lists every public operation and every typed settings group.
+   - `references/plugin-patterns.md`: read for service/data skeletons, command registration, subscriptions, persistence, and import-safe entrypoints.
+5. Align code and Manifest v2. Declare every view, command, configuration key, activation event, and platform used by the plugin. Add only the narrow read/write permissions required by actual calls.
+6. Use SDK objects rather than protocol dictionaries:
+   - Create views through `plugin.views` and UI through `pyrite_sdk.api.components` or typed renderer facades.
+   - Use `plugin.commands`, `plugin.configuration`, and `plugin.events` for host interaction.
+   - Use `plugin.resources.asset("assets/...")` for image, video, and Canvas resources.
+   - Use `Icons.<name>` for Material icons.
+7. Keep execution import-safe. Put `plugin.start()` or `plugin.run_once()` behind `if __name__ == "__main__":`. Do not start a bridge during ordinary imports or unit tests.
+8. Validate in increasing scope:
+   - Parse `plugin.toml` and run `pyrsdk test <plugin-dir>`.
+   - Compile the Python entrypoint and run focused plugin tests.
+   - Exercise changed callbacks, commands, configuration, and view updates in PyriteIDE when available.
+   - Package each requested target with `pyrsdk package` and inspect the produced archive contents and hash.
 
-## Environment
+## Non-Negotiable Contracts
 
-To prepare an environment:
-
-```bash
-python path/to/pyrite-plugin-creator/scripts/init_environment.py --output ./my-plugin
-```
-
-Useful option:
-
-- `--find_links /path/to/dir` to install `pyrite-sdk` with whl instead of PyPI. (is `--find_links`, not `--find-links`)
+- Require Manifest v2: explicit `manifest_version = 2` and `protocol_version = 1`.
+- Do not use legacy `[general]`, `[permissions]`, or `[platform]` tables.
+- Do not use RFW pages, routers, events, refresh calls, or RFW test flags. UI is a native view model containing typed renderer data or component trees.
+- Do not create WebSocket/TCP clients, read bridge ports, send envelopes, or implement a handshake. The host injects and owns the native transport.
+- Treat callbacks as asynchronous host responses. Accept `error` and flexible response fields; do not assume every API returns one fixed `data` key.
+- Give every event-producing or controller-driven component a stable, unique `id` within its view instance.
+- Send a complete snapshot before relying on incremental patches. Preserve stable node IDs across updates.
+- Recreate runtime object references after a backend restart; old references are stale by design.
+- Never broaden permissions to hide an API or configuration error.
 
 ## Scaffolding
 
-For a new plugin, prefer the bundled scaffolder, then edit the generated files:
+For a new plugin, generate a Manifest v2 project and then adapt the result:
 
 ```bash
-python path/to/pyrite-plugin-creator/scripts/scaffold_pyrite_plugin.py \
-  --output ./my-plugin \
-  --id my-plugin \
-  --name "My Plugin" \
-  --type ui \
-  --author "Your Name"
+python path/to/skill/scripts/scaffold_pyrite_plugin.py --output ./my-plugin --id acme.my-plugin --name "My Plugin" --type ui --author "Acme"
 ```
 
-Useful options:
+Useful options include `--type ui|service|data|theme|i18n|stubs`, `--renderer`, repeatable `--permission`, repeatable `--platform`, repeatable `--activation-event`, `--python-version`, `--sdk-requirement`, and `--force`.
 
-- `--type ui|service|data|theme|i18n|stubs`
-- `--permission file --permission editor` to add permissions
-- `--platform linux --platform macos` to restrict platforms
-- `--sdk-requirement pyrite-sdk==0.0.0` to control `requirements.txt`
-- `--force` to overwrite generated files
+## Validation Commands
 
-## UI Guardrails
-
-- Build actual plugin pages, not landing pages.
-- Prefer compact, native-feeling layouts with `Padding`, `margin`, `Card`, `Column`, `Row` and `SizedBox`.
-- Remember RFW single-child widgets: `Padding`, `Container`, `Expanded`, `SafeArea`, `Center`, `Align`, and button widgets can only receive one direct child. Wrap multiple children in `Column`, `Row`, or another multi-child widget.
-- Use Python SDK wrappers, not raw Flutter/Dart assumptions. If an attribute fails, inspect `/path/to/venv-libs/pyrite_sdk/api/ui/sentence/expression.py` or the widget wrapper.
-
-## Notice
-
-- Minimize or avoid using custom parsers as a replacement for the SDK's exposed configuration options unless necessary.
-- If possible, try to use Padding instead of other components to create spacing.
-- `parent.add(child)` will return `child`, not `parent`, and `parent.add_to(child)` will return `parent`. Therefore, for adding spacing outside the button, you should use `TextButton.add_to(Padding()).add(Text())`, not `Padding().add(TextButton().add(Text()))`.
-- It is better to use a float to define spacing.
-- NEVER modify ANY source code of the SDK.
-
-## Validation
-
-Use focused checks before handing work back:
+Use commands appropriate to the plugin and operating system:
 
 ```bash
-.venv/bin/python -m py_compile /path/to/plugin/__main__.py
-.venv/bin/python -m unittest tests.test_ui_api
-python - <<'PY'
-import pathlib, tomllib
-print(tomllib.loads(pathlib.Path("/path/to/plugin/plugin.toml").read_text()))
-PY
+python -m py_compile path/to/plugin/__main__.py
+python -c "import pathlib,tomllib; tomllib.loads(pathlib.Path('path/to/plugin/plugin.toml').read_text(encoding='utf-8'))"
+pyrsdk test path/to/plugin
+pyrsdk package path/to/plugin -p Windows
 ```
 
-If the plugin has UI pages and the entrypoint is import-safe, also serialize pages with `pyrsdk test --rfw --raw-output` or a small smoke test. When SDK/IDE host widgets are changed, also run the matching Flutter widget test in the PyriteIDE repo.
-k lambdas are evaluated when building the page; ensure constants are in scope and defaults are literal-safe.
-
-- `Too many child in XXX`: a single-child widget received multiple direct children. Wrap the generated content in a `Column` or `Row`.
-- `Expected state but found data`: do not emit raw `set data...` statements in RFW; update data from Python with `plugin.bridge.let(...)`.
-- UI state does not refresh: rebuild the page and call `self.bridge.refresh(call_on_refresh=False)`.
-- Callback data is missing or shaped differently: inspect the wrapper and live `**kwargs`; many APIs return values under `data`, `path`, `content`, or error keys depending on the handler.
-- API request returns an HTML Cloudflare page: the request likely never reached the API; diagnose URL and proxy/WAF rules separately from plugin code.
-
-## Coding
-
-Apply these rules when inspecting, creating, modifying, debugging, or validating a PyriteIDE plugin.
-
-### Understand Before Editing
-
-- Treat the user's request, the current workspace, and the existing implementation as the task context. When asked to change code, locate and modify the real code instead of replying with an isolated example.
-- Read every target file before editing it. Trace relevant call sites, wrappers, tests, configuration, and similar implementations before proposing a change.
-- Search before claiming that a file, symbol, API, or capability is missing. Start broad when its location is unknown, then narrow to the relevant code path.
-- Use PyriteSDK source, current examples, tests, and the PyriteIDE host bridge as the source of truth. Do not substitute generic Flutter, Dart, or Python assumptions for the serialized API that the bridge actually supports.
-- Inspect `git status` and the relevant diff before changing a dirty workspace. Preserve user changes and unrelated work; never overwrite or revert changes merely because they are outside the current task.
-- If the request appears to rely on a misconception or conflicts with current runtime behavior, explain the issue briefly and follow the verified implementation rather than silently encoding a false assumption.
-
-### Scope and Design
-
-- Implement the complete requested behavior without adding unrelated features, cleanup, configurability, or refactors.
-- Follow existing repository patterns, naming, ownership boundaries, and helper APIs. Prefer a nearby working example over a newly invented structure.
-- Keep complexity proportional to the task. Do not create one-use helpers, speculative extension points, feature flags, compatibility shims, or abstractions for hypothetical future needs.
-- Prefer a few clear repeated lines over a premature abstraction. Add an abstraction only when it removes meaningful duplication or matches an established local pattern.
-- Validate at real boundaries such as user input, plugin configuration, files, serial devices, bridge payloads, and external APIs. Do not add defensive branches for states already excluded by internal contracts.
-- Prefer editing an existing file to creating a new one. Create files only when the requested artifact or repository structure genuinely requires them; never add unsolicited README or auxiliary documentation files.
-- Keep `plugin.toml`, Python entrypoints, permissions, platform restrictions, requirements, docs, examples, and tests consistent with the behavior being implemented.
-- Add only permissions the plugin actually uses. Never broaden permissions as a shortcut around an API or configuration problem.
-- Never modify PyriteSDK or PyriteIDE source merely to make a generated plugin work unless the user explicitly requests a host or SDK change. Fix the plugin against the supported contract.
-
-### Implementation Discipline
-
-- Use the SDK's exact Python-facing names and payload shapes. Preserve snake_case APIs, `Event(callback, args={...})`, callback `**kwargs`, `plugin.bridge.let(...)`, page rebuilding, and refresh semantics where applicable.
-- Prefer structured APIs and parsers over ad hoc string manipulation, especially for TOML, JSON, paths, manifests, and serialized widget data.
-- Reuse existing utilities for path handling, configuration, state, serialization, and environment checks. Before adding inline logic, search for an established helper.
-- Keep comments rare. Add one only to explain a non-obvious constraint, invariant, workaround, or surprising behavior; do not narrate what well-named code already says.
-- Preserve existing comments unless the described code is removed or the comment is demonstrably incorrect. An unusual comment may encode a hidden compatibility constraint.
-- Do not add task-history comments such as "added for this fix" or "used by this flow"; put transient reasoning in the final report, not in source code.
-- Avoid security defects such as command injection, unsafe path construction, secret exposure, unvalidated external content, and overly broad file or serial access. Correct any security issue introduced by the change before finishing.
-- Keep imports and module execution safe. Put `plugin.start()` or `plugin.run_once()` inside `main()` and avoid import-time side effects that break tests or tooling.
-- For UI changes, respect single-child widget constraints and the actual RFW nesting/data-key behavior. Do not assume a widget property serialized successfully until its emitted payload or rendered behavior is checked.
-
-### Execution and Tool Use
-
-- For a straightforward task, act directly. For a multi-step task, maintain a short actionable plan and keep only one dependent step in progress at a time.
-- Run independent reads, searches, and checks in parallel when they cannot affect one another. Run dependent or state-changing operations sequentially.
-- Prefer dedicated file and search tools when available. Use shell commands for test runners, builds, package operations, git inspection, and other operations that genuinely require a shell.
-- Use focused searches and targeted reads instead of repeatedly loading entire large files. Use symbol/reference tooling when available to trace definitions and call sites.
-- When an approach fails, read the exact error, check assumptions, identify the root cause, and apply a focused fix. Do not repeat the identical failing action blindly or switch approaches without understanding the failure.
-- Do not suppress errors, discard stderr, weaken tests, or add `|| true` merely to obtain a successful-looking result.
-- Do not install dependencies, change global configuration, or alter the environment unless the task requires it. Prefer the repository's existing environment and declared toolchain.
-- Use temporary locations for disposable probes and generated scratch data. Do not leave debugging artifacts, caches, or throwaway scripts in the plugin workspace.
-
-### Workspace and Git Safety
-
-- Treat local edits and test execution as reversible actions. Before destructive, shared, or hard-to-reverse actions, verify that the user explicitly requested them and that the scope is clear.
-- Never use destructive git commands such as `reset --hard`, `clean -f`, force push, broad restore/checkout, or branch deletion as a shortcut around unexpected state.
-- Never change git configuration, skip hooks, bypass signing, or amend an existing commit unless the user explicitly requests that exact action.
-- Do not commit, push, create a branch, or open a pull request unless requested. Approval for one git action does not imply approval for later actions.
-- When staging is requested, stage named files rather than the whole workspace so unrelated changes, secrets, and generated artifacts are not included accidentally.
-- Investigate unfamiliar files, lock files, merge conflicts, generated output, and failing hooks before deleting, overwriting, or bypassing them.
-
-### Verification
-
-- Verification means executing the changed behavior, not only reading the code. Before reporting completion, run the most relevant checks available and inspect their actual output.
-- For bug fixes, reproduce the original failure when practical, apply the fix, rerun the reproduction, then run focused regression tests.
-- For plugin entrypoints and scripts, compile or import them, run representative inputs, and check stdout, stderr, exceptions, and exit behavior where relevant.
-- For manifests and configuration, parse them with the real parser and verify that IDs, plugin type, entrypoint, permissions, platforms, and dependencies agree with the code.
-- For UI plugins, serialize pages with `to_rfw()` or a focused smoke test when import-safe. Check event payloads, dynamic data keys, refresh behavior, and single-child structure; use host-side tests or rendered inspection when the bridge is involved.
-- For service, file, editor, board, serial, or external API behavior, exercise the public operation with representative data and verify response values or side effects, not only a successful status.
-- Test at least one relevant edge or failure case such as empty input, malformed configuration, missing data, repeated calls, invalid paths, callback errors, or boundary values.
-- Run the narrowest useful checks first, then broaden according to risk: syntax/compile, focused unit tests, related suite, lint/type checks, package/build checks, and end-to-end behavior.
-- Do not modify production code merely to make a weak test pass. Confirm that tests assert observable behavior rather than mirroring implementation details or mocks.
-- If a check fails, diagnose and fix failures caused by the change. Clearly distinguish unrelated pre-existing failures instead of hiding them.
-- If verification is impossible because a tool, environment, bridge, device, or dependency is unavailable, state exactly what was and was not verified. Never imply success for a check that was not run.
-
-### Review and Reporting
-
-- Review the final diff for scope, duplicated logic, unnecessary state, leaky abstractions, stringly typed values, avoidable work, missed cleanup, and operations that should be concurrent.
-- Re-read the user's request before finishing and confirm that every requested deliverable is present and no unrelated behavior changed.
-- Report results faithfully. State passing checks plainly, include concise failure details when checks fail, and never manufacture a green result by weakening or skipping validation.
-- Keep the final report concise: summarize what changed, name the important files, list the checks actually run, and call out any remaining limitation or risk.
+Report focused checks separately from packaging and live-host validation. If PyriteIDE is unavailable, state that native rendering, permission prompts, and host callbacks were not exercised.

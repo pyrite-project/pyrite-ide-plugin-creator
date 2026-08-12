@@ -7,7 +7,7 @@ import os
 import subprocess
 
 def run_cmd(cmd):
-    try: os.system(cmd)
+    try: subprocess.run(cmd, shell=True)
     except: pass
 
 def install_uv():
@@ -15,13 +15,13 @@ def install_uv():
     print("System OS:", os_name)
     if os_name == "posix":
         print("Installing uv on Linux/macOS...")
-        os.system("wget -qO- https://astral.sh/uv/install.sh | sh")
+        subprocess.run("wget -qO- https://astral.sh/uv/install.sh | sh", shell=True)
     elif os_name == "nt":
         print("Installing uv on Windows...")
-        os.system('powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"')
+        subprocess.run('powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"', shell=True)
     print("uv installation complete.")
 
-def create_environment(out_dir: Path, find_links: str | None = None) -> None:
+def create_environment(out_dir: Path) -> None:
     os.chdir(out_dir)
 
     if not (out_dir/"pyproject.toml").is_file():
@@ -39,20 +39,12 @@ def create_environment(out_dir: Path, find_links: str | None = None) -> None:
             return
     
     install_cmd = "uv add pyrite-sdk"
-    if find_links:
-        install_cmd += f' --find-links "{find_links}"'
     run_cmd(install_cmd)
     print(f"Created environment directory at {out_dir}")
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create an environment for PyriteSDK plugin development.")
     parser.add_argument("--output", "-o", required=True, help="Environment output directory.")
-    parser.add_argument(
-        "--find_links",
-        "--find-links",
-        dest="find_links",
-        help="Optional package index link or wheel directory for transition builds before PyPI release.",
-    )
     args = parser.parse_args()
     out_dir = Path(args.output).expanduser().resolve()
 
@@ -63,7 +55,7 @@ def main() -> int:
         print("uv is not installed. Installing uv...")
         install_uv()
 
-    create_environment(out_dir, args.find_links)
+    create_environment(out_dir)
     print(f"Created environment at {out_dir}")
     return 0
 
