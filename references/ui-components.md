@@ -1,423 +1,337 @@
-# Native Component UI
+# Native UI components
 
-The public component layer is a host-neutral declarative schema. Python constructors produce nodes shaped like:
+A view renders a list of `Component` nodes. `Component` is a `dict` subclass with
+`{"type", "props", "children", "events"}`, so it serializes straight into a
+snapshot or patch — you never build wire dictionaries by hand.
 
-```text
-{"type": "Button", "props": {...}, "children": [...], "events": {...}}
-```
-
-The SDK replaces callable handlers with boolean event markers before transmission and keeps the callable in the local view model. The host sends back the event name and payload; it never receives executable Python.
-
-## Contents
-
-- [Component fundamentals](#component-fundamentals)
-- [Layout and structure](#layout-and-structure)
-- [Content and media](#content-and-media)
-- [Input controls](#input-controls)
-- [Actions and menus](#actions-and-menus)
-- [Data components](#data-components)
-- [Page scaffolding](#page-scaffolding)
-- [Event payloads](#event-payloads)
-- [Controllers](#controllers)
-- [Canvas v2](#canvas-v2)
-- [Component checklist](#component-checklist)
-
-## Component Fundamentals
-
-Import builders from `pyrite_sdk.api.components`. Each builder returns a `Component` dict.
+**Contents**: [Layout](#layout) · [Page shells](#page-shells-and-grouping) ·
+[Text and media](#text-and-media) · [Inputs](#inputs) · [Actions](#actions) ·
+[Menus](#menus) · [Dialogs](#dialogs) · [Data components](#data-components) ·
+[Canvas](#canvas) · [Controllers](#controllers) · [Styling](#styling) ·
+[Composition](#composition-patterns)
 
 ```python
-from pyrite_sdk.api.components import Button, Column, Text
+from pyrite_sdk.api.components import *
+from pyrite_sdk.api.icons import Icons
+```
 
-root = Column(
-    Text("Ready"),
-    Button(id="run", label="Run", on_press=lambda payload: print(payload)),
+Rules that keep a tree healthy:
+
+- **Give every interactive or patchable node a stable `id`.** Builders that need
+  one (`Button`, `IconButton`, `FloatingActionButton`, `TextField`, `Menu`,
+  `VirtualList`, `TreeView`, `DataTable`, `Canvas`, `Dialog`, …) mint a random
+  `token_hex(16)` when you omit it, which silently breaks patching and event
+  routing on the next render.
+- **Ids are unique per view instance**, not global. Two instances of the same view
+  may reuse the same ids.
+- Handlers are **sync** and receive the host payload dict. A handler that returns
+  a coroutine is ignored.
+- Props set to `None` are dropped before sending, so optional props are simply
+  absent.
+- `Component.on("eventName", handler)` attaches an event the builders do not wrap;
+  the wire form carries `{eventName: true}` and the SDK maps it back to your
+  function.
+
+## Layout
+
+| Builder | Key props | Notes |
+| --- | --- | --- |
+| `Row(*children, id, gap, align, justify)` | `align`: start/center/end/stretch; `justify`: start/center/end/spaceBetween/spaceAround | Horizontal flex |
+| `Column(*children, id, gap, align, justify)` | same | Vertical flex |
+| `Flex(*children, id, direction, flex, gap)` | `direction`: horizontal/vertical | Generic flex |
+| `Stack(*children, id, alignment)` | | Overlay children |
+| `Padding(child, id, all_padding, left_padding, right_padding, top_padding, bottom_padding)` | | Pixels |
+| `Expanded(child, id, flex)` | | Must sit inside Row/Column/Flex |
+| `SizedBox(child, id, width, height)` | | Fixed box; omit `child` for a spacer |
+| `Spacer(id, flex)` | | Flexible gap |
+| `Align(child, id, alignment, width_factor, height_factor)` | | |
+| `Center(child, id, width_factor, height_factor)` | | |
+| `Container(child, id, width, height, padding, margin, color, border_radius, alignment, border_color, border_width, style)` | | The general box |
+| `Card(child, id, elevation, padding, border_radius, color, margin, style)` | | Elevated surface |
+| `AspectRatio(child, aspect_ratio, id)` | | |
+| `FittedBox(child, id, fit, alignment)` | | |
+| `ConstrainedBox(child, id, min_width, max_width, min_height, max_height)` | | |
+| `FractionallySizedBox(child, id, width_factor, height_factor, alignment)` | | |
+| `LimitedBox(child, id, max_width, max_height)` | | |
+| `SafeArea(child, id, left, top, right, bottom, minimum)` | | |
+| `Visibility(child, id, visible, maintain_state, maintain_animation, maintain_size)` | | Prefer this over removing nodes when state must survive |
+| `Grid(*children, columns, id, gap)` | | Fixed-column grid |
+| `Wrap(*children, id, gap, run_gap)` | | Flowing wrap |
+| `Divider(id, height, thickness, indent, end_indent, color)` | | |
+| `VerticalDivider(id, width, thickness, indent, end_indent, color)` | | |
+| `Tooltip(child, id, message)` | | |
+
+Scrolling containers:
+
+| Builder | Key props |
+| --- | --- |
+| `SingleChildScrollView(child, id, scroll_direction, reverse, padding, primary)` | |
+| `ListView(*children, id, scroll_direction, reverse, padding, item_extent, shrink_wrap)` | Use for modest, fully-materialised lists |
+| `GridView(*children, cross_axis_count, id, main_axis_spacing, cross_axis_spacing, padding, shrink_wrap)` | |
+| `PageView(*children, id, initial_page, scroll_direction, on_page_changed)` | event: `pageChanged` |
+
+## Page shells and grouping
+
+| Builder | Key props / events |
+| --- | --- |
+| `Scaffold(*body, id, app_bar)` | Page skeleton: optional `AppBar` plus body |
+| `AppBar(*actions, id, title)` | Title bar with action children |
+| `Toolbar(*children, id, dense)` | |
+| `Section(*children, id, title, collapsible, collapsed)` | controller: `expand/collapse/toggle/is_expanded` |
+| `Tabs(*children, id, selected)` | children are `Tab`s; controller: `select/next/previous/get_selected` |
+| `Tab(child, id, label, icon)` | |
+| `SplitView(*children, id, direction, initial_ratio)` | controller: `get_ratios/set_ratio/set_ratios/reset` |
+| `ExpansionTile(*children, id, title, subtitle, initially_expanded, enabled, on_expansion_changed)` | event: `expansionChanged` |
+| `Drawer(*children, id, width, elevation, background_color)` | |
+
+## Text and media
+
+| Builder | Key props / events |
+| --- | --- |
+| `Text(value, id, style, muted, max_lines, color, font_size, font_weight, text_align)` | `style`: `body` / `caption` / `title` / `heading` / `code`, or a dict |
+| `SelectableText(value, id, style, max_lines, on_tap)` | event: `tap` |
+| `CodeBlock(code, id, language, show_line_numbers)` | Read-only, syntax-highlighted |
+| `Markdown(value, id, on_link_tap)` | event: `linkTap`; `on_link_tap` requires an `id` |
+| `Badge(label, id, tone, style)` | |
+| `Icon(name, id, size, color, semantic_label)` | `name` is `Icons.<snake_case>` |
+| `Image(src, id, width, height, fit)` | `src` must be `plugin.resources.asset("assets/…")`; controller: `reload/evict_cache/get_intrinsic_size` |
+| `Video(src, id, width, height, fit, autoplay, looping, muted, show_controls)` | `src` must be a `PluginResource`; controller: `play/pause/seek_to/set_volume/set_speed/set_looping/get_state/enter_fullscreen/exit_fullscreen` |
+| `CircleAvatar(child, id, radius, background_color, foreground_color, text)` | |
+| `Chip(label, id, avatar_icon, delete_icon, enabled, selected, style, on_deleted, on_selected)` | events: `deleted`, `selected` |
+| `CircularProgressIndicator(id, value, stroke_width, color, background_color)` | Indeterminate when `value` is omitted |
+| `LinearProgressIndicator(id, value, min_height, color, background_color)` | |
+
+## Inputs
+
+All input builders emit `change` with the new value in the payload, and the text
+ones also emit `submit`.
+
+| Builder | Key props | Events |
+| --- | --- | --- |
+| `TextField(id, value, placeholder, label, enabled, multiline, obscure_text, max_lines, min_lines, keyboard_type, style, filled, fill_color, on_change, on_submit)` | | `change`, `submit` |
+| `NumberField(id, value, min, max, step, label, enabled, style, on_change, on_submit)` | | `change`, `submit` |
+| `Select(id, options, value, label, enabled, style, on_change)` | `options`: `[SelectOption(value=…, label=…, disabled=…)]` | `change` |
+| `Checkbox(id, value, label, enabled, style, on_change)` | | `change` |
+| `Switch(id, value, label, enabled, style, on_change)` | | `change` |
+| `Slider(id, value, min, max, step, enabled, style, on_change)` | | `change` |
+| `RangeSlider(id, start, end, min, max, step, enabled, style, on_change)` | | `change` |
+| `Radio(id, value, group_value, label, enabled, style, on_change)` | | `change` |
+| `SegmentedButton(id, segments, selected, multi_selection_enabled, empty_selection_allowed, enabled, style, on_change)` | | `change` |
+| `CheckboxListTile(id, value, title, subtitle, enabled, selected, on_change)` | | `change` |
+| `SwitchListTile(id, value, title, subtitle, enabled, selected, on_change)` | | `change` |
+| `RadioListTile(id, value, group_value, title, subtitle, enabled, on_change)` | | `change` |
+| `ListTile(id, title, subtitle, leading_icon, trailing_icon, dense, enabled, selected, style, on_tap, on_long_press)` | | `tap`, `longPress` |
+
+Controllers: `TextField.controller` / `NumberField.controller` expose
+`get_text`, `set_text`, `clear`, `select_all`, `get_selection`, `set_selection`,
+`replace_selection`, plus `get_value`, `set_value`, `increment`, `decrement` for
+numbers.
+
+## Actions
+
+| Builder | Key props | Events |
+| --- | --- | --- |
+| `Button(id, label, icon, variant, enabled, style, width, height, tooltip, on_press)` | `variant`: `primary` / `secondary` / `ghost` / `danger` | `press` |
+| `TextButton(**kwargs)` | `Button` with `variant="ghost"` | `press` |
+| `OutlinedButton(**kwargs)` | `Button` with `variant="secondary"` | `press` |
+| `FilledButton(**kwargs)` / `ElevatedButton(**kwargs)` | `Button` with `variant="primary"` | `press` |
+| `IconButton(id, icon, tooltip, enabled, style, size, on_press)` | | `press` |
+| `FloatingActionButton(id, label, icon, tooltip, extended, small, mini, enabled, style, on_press)` | | `press` |
+| `NavigationBar(id, destinations, selected_index, label_behavior, style, on_change)` | | `change` |
+| `NavigationRail(id, destinations, selected_index, extended, label_type, style, on_change)` | | `change` |
+| `BottomNavigationBar(id, items, current_index, type, on_tap)` | | `tap` |
+
+## Menus
+
+Menu entries are data classes, not components:
+
+```python
+from pyrite_sdk.api.components import (
+    Menu, MenuItem, MenuCheckboxItem, MenuRadioItem, MenuDivider, Submenu,
+    MenuShortcut, ContextMenu,
+)
+
+Menu(
+    id="acme.menu",
+    label="Actions",
+    icon=Icons.more_vert,
+    items=[
+        MenuItem(id="acme.copy", label="Copy", shortcut=MenuShortcut("C", primary=True)),
+        MenuDivider(),
+        MenuCheckboxItem(id="acme.wrap", label="Word wrap", checked=True),
+        Submenu(label="More", children=[MenuItem(id="acme.about", label="About")]),
+    ],
+    on_select=lambda e: self._on_menu(e.item_id),
 )
 ```
 
-Use `component.on(event, handler)` to attach or replace a handler and keep chaining. Use `component.id` to read the optional `props.id`. Use `component.to_json()` only for diagnostics; the view model performs the normal wire conversion.
+| Builder | Notes |
+| --- | --- |
+| `MenuItem(id, label, icon, trailing_icon, shortcut, enabled, visible, tone, close_on_select)` | Wire `type: "item"` |
+| `MenuCheckboxItem(checked=False, **MenuItem kwargs)` | `type: "checkbox"` |
+| `MenuRadioItem(selected=False, **MenuItem kwargs)` | `type: "radio"` |
+| `MenuDivider(label=None)` | `type: "divider"` |
+| `Submenu(label, children, id, icon, enabled, visible)` | `type: "submenu"` |
+| `MenuShortcut(key, primary=False, control=False, shift=False, alt=False, meta=False)` | Platform-aware hint |
+| `Menu(...)` | Trigger button; controller: `open/close/toggle/is_open` |
+| `MenuBar(items, on_select)` | controller: `open_menu(id)/close/is_open` |
+| `ContextMenu(child, items, enabled, on_select)` | controller: `show(x, y)/close/is_open` |
+| `Dropdown(items, label, on_select)` | controller: `open/close/select/get_selected/is_open` |
 
-Rules:
+`on_select` receives a `MenuEvent` with `item_id`, `item_type`, `checked`,
+`selected`, `target_id`, `target_type`.
 
-- Component IDs are required for controls, data widgets, controllers, and events. Make them unique within a view instance.
-- A leaf component cannot have children.
-- A single-child component accepts at most one direct child.
-- `Tabs` accepts only `Tab` children; `AppBar` accepts only `IconButton`, `Menu`, or `Dropdown` children.
-- Put multiple children inside a many-child layout component. Do not rely on Flutter constructor behavior or invent props not listed here.
-- Component schema validation permits a maximum of 5,000 nodes and depth 32.
-- Optional `None` props are omitted from the wire node. Use explicit `False`, `0`, or `""` when those values have meaning.
+For per-row context menus on `VirtualList` / `TreeView` / `DataTable`, pass
+`on_context_menu=<callable>`; it receives the row object and must return a
+`ContextMenu` component (or `None`, or an awaitable of either).
 
-## Layout and Structure
-
-All spacing values are logical pixels. `gap` separates adjacent children; it is not padding around the component.
-
-| Builder/signature | Props | Children and effect |
-| --- | --- | --- |
-| `Row(*children, id=None, gap=None, align=None, justify=None)` | `gap`; `align`: `start`, `center`, `end`, `stretch`; `justify`: `start`, `center`, `end`, `spaceBetween`, `spaceAround` | Many. Lays children horizontally. |
-| `Column(*children, id=None, gap=None, align=None, justify=None)` | Same as `Row` | Many. Lays children vertically. |
-| `Flex(*children, id=None, direction=None, flex=None, gap=None)` | `direction`: `horizontal` or `vertical`; optional `flex` and `gap` | Many. Use `flex` when the host should allocate remaining main-axis space. |
-| `Grid(*children, columns, id=None, gap=None)` | Required positive `columns`; optional `gap` | Many. Places children in a fixed column count. |
-| `Wrap(*children, id=None, gap=None, run_gap=None)` | `gap` between items and `runGap` between wrapped runs | Many. Wraps to available width. |
-| `SplitView(*children, id=None, direction=None, initial_ratio=None)` | `direction`: `horizontal` or `vertical`; initial ratio | Many. Divides resizable panes. |
-| `Tabs(*children, id=None, selected=None)` | Selected `Tab.id` | Many but only `Tab`; emits `change`. |
-| `Tab(child=None, id, label, icon=None)` | Required ID/label; optional Material icon | Exactly one optional child, the tab body. |
-| `Section(*children, id=None, title=None, collapsible=None, collapsed=None)` | Header title and collapse state | Many. Emits `toggle` when a collapsible header changes. |
-| `Toolbar(*children, id=None, dense=None)` | `dense` compacts the toolbar | Many. Use for compact actions/status. |
-
-`Flex` and `SplitView` are scroll/layout boundaries. Give nested lists stable IDs so their host-local scroll/expansion state survives patches.
-
-## Content and Media
-
-| Builder/signature | Props | Effect |
-| --- | --- | --- |
-| `Text(value, id=None, style=None, muted=None, max_lines=None)` | `style`: `body`, `caption`, `title`, `heading`, `code`; optional muted/max lines | Displays text. `value` must be a string; convert numbers before passing. |
-| `Icon(name, id=None, size=None)` | Required `MaterialIcon`, optional size | Displays a host Material icon. Use `Icons.<name>`. |
-| `Image(src, id=None, width=None, height=None, fit=None)` | Required `PluginResource`; `fit`: `contain`, `cover`, `fill`, `none` | Loads a packaged bitmap resource. |
-| `Video(src, id=None, width=None, height=None, fit=None, autoplay=None, looping=None, muted=None, show_controls=None)` | Required `PluginResource`; media flags and same fit values | Displays a host video player. |
-| `Markdown(value, id=None, on_link_tap=None)` | Markdown string | Renders Markdown and emits `linkTap` with a typed `MarkdownLinkEvent`. |
-| `CodeBlock(code, id=None, language=None, show_line_numbers=None)` | Code text, optional language and line numbers | Renders syntax-oriented code content. |
-| `Badge(label, id=None, tone=None)` | `tone`: `neutral`, `info`, `success`, `warning`, `danger` | Compact status label. |
-
-Resources:
+## Dialogs
 
 ```python
-logo = plugin.resources.asset("assets/logo.png")
-preview = Image(logo, id="logo", width=96, height=96, fit="contain")
+Dialog(
+    Column(Text("Delete 3 files?"), Row(TextButton(...), FilledButton(...), gap=8), gap=12),
+    id="acme.confirm",
+    title="Confirm",
+    open=True,
+    on_close=lambda payload: self._close_dialog(),
+)
 ```
 
-`Resources.asset` rejects absolute paths, backslashes, `..`, NUL characters, and paths outside `assets/`. Canvas images use the same `PluginResource` type.
+`AlertDialog(*children, id, title, open, on_close)` is the same node with
+`type="AlertDialog"`. Toggle `open` through a patch (`update(id, {"open": False})`)
+or the controller (`show()`, `close(result)`, `is_open()`). Event: `close`.
 
-## Input Controls
+`SnackBar(message, id, action_label, duration_ms, on_action)` — event: `action`.
+For one-off toasts prefer `plugin.message.info(...)`, which does not need a view.
 
-Every input requires a stable `id`. Event handlers receive a payload with the current value under `value`.
+## Data components
 
-| Builder/signature | Props | Events and value rules |
+These are virtualised: give them a total count and page in slices rather than
+materialising everything.
+
+```python
+VirtualList(
+    id="acme.files",
+    items=[ListItem(id="a.py", label="a.py", icon=Icons.description_outlined)],
+    item_count=1200,
+    selected_id="a.py",
+    on_select=lambda item: self._select(item.id),
+    on_activate=lambda item: self._open(item.id),
+    on_request_range=lambda req: self._load(req.start, req.count),
+)
+```
+
+| Builder | Data class | Events |
 | --- | --- | --- |
-| `TextField(*, id, value=None, placeholder=None, label=None, enabled=None, multiline=None, on_change=None, on_submit=None)` | Text value, hint/label, enabled flag, multiline | `change` is host-debounced; `submit` means confirmed. Payload `{value: str}`. |
-| `NumberField(*, id, value=None, min=None, max=None, step=None, label=None, enabled=None, on_change=None, on_submit=None)` | Numeric value/range/step, label, enabled | `change`/`submit`; payload `{value: number}` or a null value while input is incomplete. |
-| `Select(*, id, options, value=None, label=None, enabled=None, on_change=None)` | Required iterable of option maps or `SelectOption`; selected value | `change`; payload `{value: string}`. |
-| `Checkbox(*, id, value=None, label=None, enabled=None, on_change=None)` | Boolean value, label, enabled | `change`; payload `{value: bool}`. |
-| `Switch(*, id, value=None, label=None, enabled=None, on_change=None)` | Boolean value, label, enabled | `change`; payload `{value: bool}`. |
-| `Slider(*, id, value=None, min=None, max=None, step=None, enabled=None, on_change=None)` | Numeric value/range/step, enabled | `change`; payload `{value: number}`. |
+| `VirtualList(id, items, item_count, item_height, selected_id, empty_label, on_select, on_activate, on_request_range, on_context_menu)` | `ListItem(id, label, icon, **data)` | `select`, `activate`, `requestRange` |
+| `TreeView(id, nodes, expanded_ids, selected_id, indent, searchable, empty_label, on_select, on_activate, on_expand, on_collapse, on_request_children, on_context_menu)` | `TreeNode(id, label, parent_id, icon, has_children, **data)` | `select`, `activate`, `expand`, `collapse`, `requestChildren` |
+| `DataTable(id, columns, rows, row_count, row_height, show_header, selected_id, sort_column, sort_ascending, empty_label, on_select, on_activate, on_sort, on_request_range, on_context_menu)` | `TableColumn(id, label, width, flex, frozen, sortable)`, `TableRow(id, cells)` | `select`, `activate`, `sort`, `requestRange` |
+| `PropertyGrid(id, entries, on_select, on_expand)` | `PropertyEntry(id, name, value, type_name, parent_id, has_children, **meta)` | `select`, `expand` |
 
-Use `enabled=False` to disable a control. Do not use a stale local value to overwrite host edits on every patch; update the model only when the plugin state intentionally changes.
+`RangeRequest` carries `start` and `count`. Controllers: `VirtualList.controller`
+(`select`, `clear_selection`, `reveal_item`, `jump_to_index`,
+`animate_to_index`, `scroll_by`), `TreeView.controller` (`select`, `reveal`,
+`expand`, `collapse`, `toggle`, `expand_all`, `collapse_all`, `is_expanded`,
+`get_visible_nodes`), `DataTable.controller` (`select_row`, `reveal_row`,
+`reveal_cell`, `jump_to_row`, `animate_to_row`, `get_visible_range`),
+`PropertyGrid.controller` (tree methods plus `activate`).
 
-`SelectOption(value, label, disabled=False)` is the typed option helper. Its `value` and `label` properties expose the fixed fields.
+`ListItem` / `TreeNode` / `TableRow` / `PropertyEntry` are dict subclasses, so any
+extra keyword becomes metadata on the wire and is readable again from the object
+handed back to your handler.
 
-## Actions and Menus
+## Canvas
 
-| Builder/signature | Props/children | Events and effect |
-| --- | --- | --- |
-| `Button(*, id, label, icon=None, variant=None, enabled=None, on_press=None)` | Variant: `primary`, `secondary`, `ghost`, `danger`; optional icon | `press` with `{}`. |
-| `IconButton(*, id, icon, tooltip=None, enabled=None, on_press=None)` | Required Material icon; optional tooltip/enabled | `press` with `{}`. |
-| `Menu(*, id, items, label=None, icon=None, tooltip=None, enabled=None, icon_only=None, alignment=None, offset_x=None, offset_y=None, use_root_overlay=None, child=None, on_select=None)` | Required menu entries; optional one trigger child. Alignment: `bottomStart`, `bottomEnd`, `topStart`, `topEnd`. `iconOnly` defaults false; root overlay defaults true. | `select`, converted to `MenuEvent`. A child is one trigger, not a list. |
-| `MenuBar(*, id, items, on_select=None)` | Required top-level menu entries | `select`, converted to `MenuEvent`. |
-| `ContextMenu(child=None, *, id, items, enabled=None, on_select=None)` | Required entries and optional one target child | `select`, converted to `MenuEvent`. Return one from a dynamic context-menu provider. |
-| `Dropdown(*, id, items, label=None, on_select=None)` | Required item maps, optional label | `select` with `{itemId: ...}`. |
-| `Dialog(*children, id, title=None, open=None, on_close=None)` | Many content children; optional title/open state | `close` with `{result: ...}`. `controller.show/close` can drive it. |
-| `Tooltip(child=None, id=None, message)` | Required message and one optional child | Host tooltip wrapper; no custom event. |
+A Canvas is a retained custom-draw surface. Coordinates are content-space logical
+pixels; angles are radians, clockwise-positive.
 
-Typed menu entries:
+```python
+from pyrite_sdk.api import canvas as cv
+from pyrite_sdk.api.components import Canvas
 
-| Type | Fields and effect |
-| --- | --- |
-| `MenuShortcut(key, primary=False, control=False, shift=False, alt=False, meta=False)` | Shortcut display/metadata. `primary` represents the platform primary modifier. |
-| `MenuItem(id, label, icon=None, trailing_icon=None, shortcut=None, enabled=None, visible=None, tone=None, close_on_select=None)` | Ordinary actionable item. `tone` is host-defined styling metadata; `visible=False` removes it. |
-| `MenuDivider(label=None)` | Visual separator, optionally labeled. |
-| `MenuCheckboxItem(checked=False, **kwargs)` | `MenuItem` with a checked state. |
-| `MenuRadioItem(selected=False, **kwargs)` | `MenuItem` with a selected state. |
-| `Submenu(label, children, id=None, icon=None, enabled=None, visible=None)` | Nested menu entries. |
+Canvas(
+    id="acme.plot",
+    width=640, height=240,
+    interactive=True,
+    ops=[
+        cv.rect(0, 0, 640, 240, paint=cv.paint(color=cv.Color.surface)),
+        cv.line(0, 120, 640, 120, paint=cv.paint(color=cv.Color.outline, stroke_width=1)),
+        cv.polyline([(0, 200), (120, 80), (240, 160)], paint=cv.paint(color=cv.Color.primary, stroke_width=2)),
+        cv.text(12, 12, "sample", size=12, color=cv.Color.on_surface),
+    ],
+    on_pointer=lambda payload: self._on_pointer(payload),
+)
+```
 
-`MenuEvent` fields are `item_id`, `item_type`, `checked`, `selected`, `target_id`, and `target_type`. Missing optional fields return `None`.
+Op helpers: `line`, `polyline`, `rect`, `rrect`, `circle`, `oval`, `arc`, `points`,
+`polygon`, `path` (built from `move_to` / `line_to` / `quad_to` / `cubic_to` /
+`close`), `text`, `image`, `group`, plus transform and clip ops (`save`,
+`restore`, `save_layer`, `translate`, `scale`, `rotate`, `matrix`, `clip_rect`,
+`clip_rrect`, `clip_path`).
 
-## Data Components
+Paint: `cv.paint(color=…, stroke_width=…, style=…, stroke_cap=…, stroke_join=…,
+opacity=…, blend_mode=…, shader=…, anti_alias=…)`, with gradients from
+`cv.linear_gradient(...)` / `cv.radial_gradient(...)`.
 
-| Builder/signature | Main props | Events |
-| --- | --- | --- |
-| `VirtualList(*, id, items=None, item_count=None, item_height=None, selected_id=None, empty_label=None, on_select=None, on_activate=None, on_request_range=None, on_context_menu=None)` | Loaded `items`, logical count, fixed height, selected ID, empty label | `select`/`activate` with `{itemId}`; `requestRange` with `{start, count}`; dynamic `contextMenuRequest`. |
-| `TreeView(*, id, nodes=None, expanded_ids=None, selected_id=None, indent=None, searchable=None, empty_label=None, on_select=None, on_activate=None, on_expand=None, on_collapse=None, on_request_children=None, on_context_menu=None)` | Flat `TreeNode` list, expanded IDs, selected ID, indent, searchable flag, empty label | `select`, `activate`, `expand`, `collapse`, `requestChildren` with `{nodeId}`; `contextMenu` (right-click coordinates) and dynamic `contextMenuRequest`. |
-| `DataTable(*, id, columns, rows=None, row_count=None, row_height=None, show_header=None, selected_id=None, sort_column=None, sort_ascending=None, empty_label=None, on_select=None, on_activate=None, on_sort=None, on_request_range=None, on_context_menu=None)` | Required `TableColumn` list, rows/count/height/header/selection/sort | `select`/`activate` with `{rowId}`; `sort` with `{columnId}`; `requestRange` with `{start, count}`; dynamic context menu. |
-| `PropertyGrid(*, id, entries, on_select=None, on_expand=None)` | Required `PropertyEntry` list | `select`/`expand` with `{nodeId}`. The host also supports collapse, activation, child requests, and dynamic context menus when the corresponding event markers are present. |
+Colors: hex strings (`"#RRGGBB"`, `"#AARRGGBB"`) or theme tokens from
+`cv.Color` (`primary`, `onPrimary`, `secondary`, `surface`, `onSurface`,
+`onSurfaceVariant`, `surfaceContainerHighest`, `outline`, `error`, `onError`) or
+`cv.Color.theme("role")`.
 
-Typed data helpers:
-
-| Type | Fields |
-| --- | --- |
-| `ListItem` | `id`, `label`, optional `icon`, arbitrary metadata. |
-| `TreeNode` | `ListItem` plus `parent_id`, `has_children`. |
-| `TableRow` | `id`, `cells` map, arbitrary metadata. |
-| `TableColumn` (component) | `id`, `label`, optional `width`, `flex`, `frozen`, `sortable`. |
-| `PropertyEntry` | `id`, `name`, `value`, `type_name`, `parent_id`, `has_children`, arbitrary metadata. |
-| `RangeRequest` | `start` and `count` properties from a range event. |
-
-Large data guidance:
-
-- Set `item_count`/`row_count` to the logical total and keep only the loaded window in `items`/`rows`.
-- Use `RangeRequest.start` and `.count` to fetch the requested window.
-- Keep IDs stable when windows slide; do not use the visible index as a permanent identity.
-- Return a dynamic context menu as a `ContextMenu` component, not a plain list.
-
-## Page Scaffolding
-
-| Builder | Contract |
-| --- | --- |
-| `AppBar(*actions, id=None, title=None)` | Many children, but direct children may only be `IconButton`, `Menu`, or `Dropdown`. The host adds manifest title actions separately. |
-| `Scaffold(*body, id=None, app_bar=None)` | Many children. An optional `app_bar` is placed before the body; the host gives the body a bounded main-axis extent so lists and split views can scroll. |
-
-Use `Scaffold` as the single root when a view needs a title bar and body. Do not put arbitrary `Text` or layout children directly under `AppBar`.
-
-## Event Payloads
-
-The following payload keys are emitted by the host component layer:
-
-| Component/event | Payload |
-| --- | --- |
-| Button/IconButton `press` | `{}` |
-| TextField/NumberField `change`/`submit` | `{value: ...}` |
-| Select/Checkbox/Switch/Slider `change` | `{value: ...}` |
-| Tabs `change` | `{id: tab_id}` |
-| Section `toggle` | `{collapsed: bool}` |
-| Menu/MenuBar/ContextMenu `select` | Menu event fields such as `itemId`, `itemType`, `checked`, `selected`, `targetId`, `targetType`. |
-| Dropdown `select` | `{itemId: id}` |
-| Dialog `close` | `{result: ...}` |
-| Markdown `linkTap` | `{href: url}`; `MarkdownLinkEvent.href` exposes it. |
-| VirtualList `select`/`activate` | `{itemId: id}` |
-| VirtualList `requestRange` | `{start: int, count: int}` |
-| TreeView `select`/`activate`/`expand`/`collapse`/`requestChildren` | `{nodeId: id}` |
-| TreeView `contextMenu` | `{nodeId: id, x: number, y: number}` |
-| DataTable `select`/`activate` | `{rowId: id}` |
-| DataTable `sort` | `{columnId: id}` |
-| DataTable `requestRange` | `{start: int, count: int}` |
-| PropertyGrid `select`/`activate`/`expand`/`collapse`/`requestChildren` | `{nodeId: id}` |
-| Canvas `tap`/`drag`/`hover`/`pointer` | Renderer-defined map. Tap commonly includes `x`, `y`, and `elementId`; drag includes `phase`, coordinates, and deltas. |
-
-Handlers should accept `payload` and use `.get(...)` for optional keys. Do not assume a double-click event if the component only declares `activate`.
+Two layers: `props.ops` is the persistent base layer (survives snapshots and
+resyncs); `canvas.controller.push_ops(ops)` / `set_ops(ops)` write the ephemeral
+overlay (lost on resync). Controller also offers `clear`, `clear_layer`,
+`hit_test`. Events: `tap`, `drag`, `hover`, `pointer` — each only wired when you
+pass a handler, so an idle canvas costs no cross-process traffic.
 
 ## Controllers
 
-Access `component.controller` after the component has been mounted in a view snapshot. Every method accepts an optional callback. Calling a controller before the component has a `props.id` or before it is bound to a `ViewModel` raises locally.
-
-### Base controller
-
-Available for every component:
-
-| Method | Effect |
-| --- | --- |
-| `is_mounted(callback=None)` | Ask whether the host currently mounts the component. |
-| `ensure_visible(alignment=0.5, animated=True, callback=None)` | Scroll the containing surface so the component is visible; alignment is 0..1. |
-| `get_bounds(callback=None)` | Return host layout bounds. |
-| `request_focus(callback=None)` | Request keyboard/input focus. |
-| `unfocus(callback=None)` | Remove focus. |
-
-### Text and number fields
-
-`TextField.controller`:
-
-- `get_text`
-- `set_text(text)`
-- `clear`
-- `select_all`
-- `get_selection`
-- `set_selection(start, end=None)`; omitted end selects the caret position.
-- `replace_selection(text)`
-
-`NumberField.controller` inherits all text methods and adds:
-
-- `get_value`
-- `set_value(value)`
-- `increment`
-- `decrement`
-
-### Virtual list
-
-`VirtualList.controller`:
-
-- `select(id)` and `clear_selection()`
-- `reveal_item(id, animated=True)`
-- `jump_to_index(index)` and `animate_to_index(index)`
-- `scroll_by(delta, animated=True)`
-- `get_visible_range()`
-
-### Tree and property grid
-
-`TreeView.controller`:
-
-- `select(id)`, `clear_selection()`
-- `reveal(id, animated=True)`
-- `expand(id)`, `collapse(id)`, `toggle(id)`
-- `expand_all()`, `collapse_all()`
-- `is_expanded(id)`
-- `get_visible_nodes()`
-
-`PropertyGrid.controller` inherits every tree method and adds `activate(id)`.
-
-### Data table
-
-`DataTable.controller`:
-
-- `select_row(id)`, `clear_selection()`
-- `reveal_row(id, animated=True)`
-- `reveal_cell(row_id, column_id, animated=True)`
-- `jump_to_row(index)`, `animate_to_row(index)`
-- `get_visible_range()`
-
-### Tabs, sections, and split views
-
-| Controller | Methods |
-| --- | --- |
-| `Tabs` | `select(id)`, `next()`, `previous()`, `get_selected()` |
-| `Section` | `expand()`, `collapse()`, `toggle()`, `is_expanded()` |
-| `SplitView` | `get_ratios()`, `set_ratio(index, ratio)`, `set_ratios(ratios)`, `reset()` |
-
-Ratios are host layout fractions. Keep the number of values equal to the pane count and clamp plugin-provided values to a sensible range.
-
-### Media and Markdown
-
-| Controller | Methods |
-| --- | --- |
-| `Video` | `play()`, `pause()`, `seek_to(position_ms)`, `set_volume(volume)`, `set_speed(speed)`, `set_looping(looping)`, `get_state()`, `enter_fullscreen()`, `exit_fullscreen()` |
-| `Image` | `reload()`, `evict_cache()`, `get_intrinsic_size()` |
-| `Markdown` | `scroll_to_anchor(anchor)`, `get_anchor_offset(anchor)`, `select_all()`, `copy_selection()` |
-
-Use milliseconds for video positions and a normalized volume expected by the host. Do not inline bitmap bytes into a Canvas or component payload.
-
-### Menus, dialogs, and Canvas
-
-| Controller | Methods |
-| --- | --- |
-| `Menu` | `open()`, `close()`, `toggle()`, `is_open()` |
-| `MenuBar` | `open_menu(id)`, `close()`, `is_open()` |
-| `Dropdown` | `open()`, `close()`, `select(id)`, `get_selected()`, `is_open()` |
-| `ContextMenu` | `show(x=None, y=None)`, `close()`, `is_open()` |
-| `Dialog` | `show()`, `close(result=None)`, `is_open()` |
-| `Canvas` | `push_ops(ops, layer=None)`, `set_ops(ops, layer=None)`, `clear()`, `clear_layer(layer)`, `hit_test(x, y)` |
-
-Controller callbacks receive the host response fields. Keep them tolerant just like other SDK callbacks.
-
-## Canvas v2
-
-Import helpers from `pyrite_sdk.api.canvas` (often as `canvas`). Canvas operations are plain JSON-compatible dictionaries with an `op` discriminator. Coordinates are logical content-space pixels; angles are radians and positive clockwise. Point helpers accept either a flat list `[x0, y0, ...]` or `(x, y)` pairs.
-
-### Color tokens
-
-`canvas.Color` and `canvas.color` are the same callable factory. Pass literal `#RRGGBB` or `#AARRGGBB` strings, or use theme tokens:
-
-`primary`, `on_primary`, `secondary`, `on_secondary`, `surface`, `on_surface`, `on_surface_variant`, `surface_container_highest`, `outline`, `error`, and `on_error`.
-
-For an arbitrary role use `canvas.color.theme("roleName")`. Theme tokens resolve in the host's current light/dark theme.
-
-### Gradients and paint
-
-| Helper | Parameters | Purpose |
-| --- | --- | --- |
-| `linear_gradient(frm, to, colors, stops=None, tile_mode=None)` | Two points, color list, optional normalized stops/tile mode | Linear shader. |
-| `radial_gradient(center, radius, colors, stops=None, focal=None, tile_mode=None)` | Center/radius/color list and optional focal/stops/tile mode | Radial shader. |
-| `paint(color=None, stroke_width=None, style=None, stroke_cap=None, stroke_join=None, opacity=None, blend_mode=None, shader=None, anti_alias=None)` | Paint attributes | Shared style for geometry. `style` is normally `fill` or `stroke`. |
-
-`None` values are omitted. Keep paint maps reusable when many operations share a style.
-
-### Geometry operations
-
-| Helper | Wire op and parameters | Effect |
-| --- | --- | --- |
-| `line(x1, y1, x2, y2, *, paint, id=None)` | `line` | Draw a segment. |
-| `polyline(points, *, paint, id=None)` | `polyline` | Draw connected segments through points. |
-| `rect(x, y, w, h, *, paint, id=None)` | `rect` | Axis-aligned rectangle. |
-| `rrect(x, y, w, h, *, paint, radius=None, rx=None, ry=None, id=None)` | `rrect` | Rounded rectangle; use `radius` or explicit radii. |
-| `circle(cx, cy, r, *, paint, id=None)` | `circle` | Circle. |
-| `oval(x, y, w, h, *, paint, id=None)` | `oval` | Oval in a bounding rectangle. |
-| `arc(x, y, w, h, start_angle, sweep_angle, *, paint, use_center=None, id=None)` | `arc` | Arc of a bounding oval; `use_center` closes to center when true. |
-| `points(mode, points, *, paint, id=None)` | `points` | Host point mode such as points/lines/polygon, according to the Canvas schema. |
-| `polygon(points, *, paint, closed=None, id=None)` | `polygon` | Polygon from point list; `closed` controls closure. |
-
-An optional `id` gives hit testing and semantic tap payloads an element identity. It does not make an operation interactive by itself.
-
-### Paths
-
-Build path command dictionaries and pass them to `path`:
-
-| Helper | Command |
-| --- | --- |
-| `move_to(x, y)` | Move current point. |
-| `line_to(x, y)` | Straight segment. |
-| `quad_to(x1, y1, x, y)` | Quadratic curve. |
-| `cubic_to(x1, y1, x2, y2, x, y)` | Cubic curve. |
-| `close()` | Close the current contour. |
-| `path(commands, *, paint, fill_rule=None, id=None)` | Draw the assembled path. |
-
-`fill_rule` is host-defined (`nonZero`/`evenOdd` are typical schema values). Keep commands JSON-compatible.
-
-### Text and images
-
-`text(x, y, value, *, size=None, family=None, weight=None, italic=None, color=None, align=None, max_width=None, id=None)` draws text. `value` is a string; `size` is logical pixels; `max_width` bounds layout.
-
-`image(src, x, y, *, width=None, height=None, src_x=None, src_y=None, src_w=None, src_h=None, opacity=None, id=None)` draws a packaged image. `src` must be `plugin.resources.asset("assets/file.png")` and is sent as a resource URI; raw paths and bytes are rejected.
-
-### Clipping, layers, and grouping
-
-| Helper | Effect |
-| --- | --- |
-| `clip_rect(x, y, w, h, anti_alias=None)` | Clip to a rectangle. |
-| `clip_rrect(x, y, w, h, radius, anti_alias=None)` | Clip to a rounded rectangle. |
-| `clip_path(commands, fill_rule=None, anti_alias=None)` | Clip to a path. |
-| `save()` / `restore()` | Save/restore Canvas state. Keep pairs balanced. |
-| `save_layer(bounds=None, opacity=None)` | Save an offscreen layer with optional bounds/opacity. |
-| `group(*ops, opacity=None, transform=None, clip=None)` | Bundle operations with optional group transform/clip/opacity. |
-
-### Transforms
-
-| Helper | Effect |
-| --- | --- |
-| `translate(dx, dy)` | Translate the coordinate system. |
-| `scale(sx, sy=None)` | Scale; omit `sy` for uniform scale. |
-| `rotate(radians, px=None, py=None)` | Rotate around optional pivot. |
-| `matrix(affine=None, m4=None)` | Supply exactly one affine matrix or 4x4 matrix representation. Passing both or neither raises `ValueError`. |
-
-### Persistent base versus controller overlay
+`component.controller` returns a typed controller for a mounted component. It
+requires a stable `id` and a component that is already in a view instance; calls
+are routed as `invoke` requests, not patches.
 
 ```python
-surface = Canvas(
-    id="diagram",
-    width=640,
-    height=480,
-    ops=[canvas.rect(0, 0, 640, 480, paint=canvas.paint(color=canvas.color.surface))],
-)
+self.field.controller.set_text("hello")
+self.tree.controller.expand("src")
+self.canvas.controller.push_ops([cv.circle(10, 10, 4, paint=cv.paint(color="#f00"))])
+```
 
-# After the component is mounted:
-surface.controller.push_ops(
-    [canvas.circle(120, 80, 5, paint=canvas.paint(color="#FFCC00"))],
-    layer="cursor",
+Base controller (every component): `is_mounted`, `ensure_visible(alignment,
+animated)`, `get_bounds`, `request_focus`, `unfocus`.
+
+## Styling
+
+- `variant` is the sanctioned way to pick a button emphasis.
+- `style` is a free-form dict passed to the host's component registry. Its keys are
+  host-defined; prefer explicit props (`color`, `font_size`, `font_weight`,
+  `border_radius`, `padding`, `margin`, `gap`) and do not invent style keys — an
+  unknown key is silently ignored or rejected by the registry, never by the SDK.
+- Colors are strings. Use theme-role tokens where a component accepts them so the
+  UI follows the active theme; hard-coded hex is fine for data visualisation.
+- Spacing is logical pixels; `gap` on `Row`/`Column`/`Flex`/`Grid`/`Wrap` is the
+  cheapest way to lay out, and avoids wrapper `Padding` nodes.
+
+## Composition patterns
+
+**Header + scrolling body**
+
+```python
+Scaffold(
+    Column(
+        Row(Text("Files", style="heading"), Spacer(), IconButton(id="acme.reload", icon=Icons.refresh, on_press=self._reload), gap=8),
+        Divider(),
+        Expanded(ListView(*[ListTile(id=f"row.{i}", title=name) for i, name in enumerate(names)])),
+        gap=12,
+    )
 )
 ```
 
-- `Canvas(ops=[...])` is the persistent base model. It survives ordinary view patches and is reconstructed by a snapshot.
-- `CanvasController.push_ops` appends to an ephemeral overlay layer.
-- `CanvasController.set_ops` replaces an ephemeral layer.
-- `clear()` clears the overlay; `clear_layer(name)` clears one layer.
-- Overlay operations are lost on resync or visibility restoration. Recreate persistent geometry in `props.ops` and use overlays only for transient selection/cursor/drag visuals.
-- Controller operation arguments are capped at 2 MiB, just like view payloads.
+**Empty state instead of an empty list**
 
-`hit_test(x, y)` asks the host which semantic operation ID is under a point. Set operation IDs and handle the result; do not replicate host hit-testing math in Python.
+```python
+if not self._items:
+    return [Scaffold(Center(Column(Icon(Icons.inbox_outlined, size=32), Text("Nothing here yet", muted=True), gap=8)))]
+```
 
-### Canvas interaction
-
-Set `interactive=True` to enable host-local interaction. `viewport` can carry host viewport configuration such as `scale`, `minScale`, and `maxScale`. Only semantic events cross the bridge:
-
-- `tap`: click/tap, commonly `{x, y, elementId}`.
-- `drag`: gesture lifecycle with `phase` (`start`, `update`, `end`), coordinates, and deltas.
-- `hover`: throttled pointer hover.
-- `pointer`: throttled low-level pointer data.
-
-The host handles pan/zoom and throttling. Keep high-frequency work in Canvas host-local behavior and debounce plugin reactions.
-
-## Component Checklist
-
-- Use a single root component in each free-form view snapshot.
-- Give every interactive/control/data component an `id`.
-- Use only listed props and enum values; Python snake_case is converted to wire camelCase.
-- Use typed Material icons and plugin resources.
-- Wrap multiple children in a many-child layout; respect `Tab`/`AppBar` restrictions.
-- Keep event handlers tolerant of optional payload keys and update plugin state deliberately.
-- Use controllers only after mount and provide callbacks for host results.
-- Keep Canvas persistent ops small, balanced, and JSON-compatible; use overlay layers for transient marks.
-- Test component validation errors by parsing the view payload before handing off.
+**Keep ids stable across renders.** Derive them from data (`f"row.{path}"`), never
+from list position if the list can reorder, and never let the builder generate one.

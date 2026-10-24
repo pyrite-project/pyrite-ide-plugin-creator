@@ -1,417 +1,288 @@
-# Manifest v2 Reference
+# Manifest v2 reference
 
-This reference describes the complete public `plugin.toml` contract for PyriteIDE plugins using protocol v1.
+`plugin.toml` sits at the root of the plugin package, next to `__main__.py`. The
+host parses it with `pyrite_sdk.models.manifest.load_file()`, which is strict:
+unknown keys, wrong types, and dangling references are hard errors at install
+time. Validating locally is always cheaper than reinstalling.
 
-## Contents
+**Contents**: [Top-level fields](#top-level-fields) · [Activation events](#activation-events) ·
+[Permissions](#permissions) · [Contributes](#contributes) · [when expressions](#when-expressions) ·
+[Icons and assets](#icons-and-assets) · [Complete examples](#complete-examples) ·
+[Common mistakes](#common-manifest-mistakes)
 
-- [Required shape](#required-shape)
-- [Top-level fields](#top-level-fields)
-- [Contribution rules](#contribution-rules)
-- [Navigation containers](#navigation-containers)
-- [Views](#views)
-- [Commands](#commands)
-- [Menus](#menus)
-- [Configuration](#configuration)
-- [Icons and assets](#icons-and-assets)
-- [Activation events](#activation-events)
-- [Permissions](#permissions)
-- [Platforms](#platforms)
-- [`when` expressions](#when-expressions)
-- [Complete example](#complete-example)
-- [Failure checklist](#failure-checklist)
-
-## Required Shape
-
-Manifest v2 uses top-level fields and arrays of tables. Do not use the legacy `[general]`, `[permissions]`, or `[platform]` tables.
-
-The six required fields must be written explicitly:
-
-```toml
-manifest_version = 2
-id = "acme.python-tools"
-name = "Python Tools"
-version = "1.0.0"
-type = "ui"
-protocol_version = 1
+```python
+from pyrite_sdk.models.manifest import load_file
+load_file("my-plugin/plugin.toml")     # raises ManifestValidationError(code, message)
 ```
 
-The parser rejects unknown fields, wrong TOML types, duplicate entries, unsupported values, and contribution IDs outside the plugin namespace.
+`ManifestValidationError.code` is one of:
 
-## Top-Level Fields
+`manifest_missing`, `manifest_invalid_toml`, `manifest_missing_version`,
+`manifest_unsupported_version`, `manifest_invalid_schema`,
+`manifest_invalid_plugin_id`, `manifest_invalid_permission`,
+`manifest_invalid_contribution_id`, `manifest_contribution_conflict`,
+`manifest_missing_navigation_container`, `manifest_unknown_renderer`,
+`manifest_rfw_renderer_unsupported`, `manifest_invalid_when`,
+`manifest_unknown_icon`, `manifest_invalid_activation_event`.
 
-| Field | TOML type | Required | Default | Purpose and constraints |
-| --- | --- | --- | --- | --- |
-| `manifest_version` | integer | yes | none in a file | Must equal `2`. |
-| `id` | string | yes | none | Stable plugin identity and contribution namespace. It is not a display label. |
-| `name` | string | yes | none | Non-empty display name. |
-| `version` | string | yes | none | Non-empty plugin version. The manifest does not enforce SemVer syntax, but SemVer is recommended. |
-| `type` | string | yes | none | Exactly `ui`, `service`, or `data`. |
-| `protocol_version` | integer | yes | none in a file | Must equal `1`. |
-| `python_version` | string | no | omitted | Packaging/runtime compatibility declaration, for example `"3.14"`. It does not select a private interpreter for this plugin. |
-| `author` | string | no | `""` | Human-facing author metadata. |
-| `description` | string | no | `""` | Human-facing plugin summary. |
-| `icons` | inline/table | no | omitted | Full-color and monochrome package icons below `assets/`. |
-| `activation_events` | array of strings | no | `[]` | Conditions that start a plugin session. |
-| `permissions` | array of strings | no | `[]` | Host capabilities requested by the plugin. |
-| `platforms` | array of strings | no | `[]` | Supported host platforms. |
-| `contributes` | table | no | empty | Static navigation, views, commands, menus, and settings declarations. |
+## Top-level fields
 
-ID rules:
+| Key | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `manifest_version` | int | yes | Must be exactly `2`. v1 manifests are rejected. |
+| `id` | string | yes | `^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9][A-Za-z0-9_-]*)*$`; Windows device names (`con`, `nul`, `com1`, …) rejected. |
+| `name` | string | yes | Non-blank display name. |
+| `version` | string | yes | Non-blank. Semver is conventional, not enforced. |
+| `type` | string | yes | `"ui"`, `"service"`, or `"data"`. |
+| `protocol_version` | int | yes | Must be `1`. |
+| `python_version` | string | no | Runtime bundled by the packager: `"3.12"`, `"3.13"`, `"3.14"`. Omitted → `3.14`. |
+| `author` | string | no | Free text. |
+| `description` | string | no | Free text, shown in the plugin list. |
+| `icons` | table | no | `full` and `monochrome`, both required when the table exists, both `assets/…`. |
+| `activation_events` | array of strings | no | See below. Empty means the host decides (installed-but-lazy). |
+| `permissions` | array of strings | no | Allowlist below; duplicates rejected. |
+| `platforms` | array of strings | no | Subset of `windows`, `linux`, `macos`, `android`; duplicates rejected. |
+| `contributes` | table | no | Contributions below. |
 
-- A plugin ID starts with an ASCII letter or digit and may contain letters, digits, `_`, `-`, and dot-separated segments.
-- Windows reserved names such as `con`, `nul`, `com1`, and `lpt1` are invalid as the first plugin ID segment.
-- Every contribution ID must start with `<plugin-id>.`, except a navigation container may equal the plugin ID exactly.
-- Contribution IDs are unique without regard to letter case, including across contribution kinds.
+Unknown top-level keys are rejected — `extra="forbid"` plus an explicit allowlist.
 
-Examples of valid IDs: `python-tools`, `acme.python_tools`, `acme.tools-debug`.
+## Activation events
 
-## Contribution Rules
-
-Only these keys are allowed under `contributes`:
-
-```toml
-[[contributes.navigation_containers]]
-[[contributes.views]]
-[[contributes.commands]]
-[[contributes.menus]]
-[[contributes.configuration]]
-```
-
-A UI plugin must declare at least one navigation container. References are local to the same manifest: a view must target a declared container, and a menu must target declared commands and views.
-
-Every contribution supports `order = 0` unless noted otherwise. Lower values sort before higher values. Use explicit spaced values such as `10`, `20`, and `30` when ordering matters.
-
-## Navigation Containers
-
-Fields:
-
-| Field | Required | Purpose |
-| --- | --- | --- |
-| `id` | yes | Container identity. It may equal the plugin ID. |
-| `title` | yes | Non-empty navigation label. |
-| `icon` | no | Material or asset icon reference. |
-| `location` | no | `primary` by default; also accepts `secondary`. |
-| `order` | no | Navigation ordering integer. |
-| `when` | no | Visibility condition. |
-
-Example:
-
-```toml
-[[contributes.navigation_containers]]
-id = "acme.python-tools"
-title = "Python"
-icon = { material = "code" }
-location = "primary"
-order = 100
-when = "workspace.opened"
-```
-
-Use one container for related views. Add another only when the plugin genuinely needs a separate navigation destination.
-
-## Views
-
-Fields:
-
-| Field | Required | Purpose |
-| --- | --- | --- |
-| `id` | yes | Namespaced view ID used by `plugin.views` and activation events. |
-| `container` | yes | ID of a navigation container in this manifest. |
-| `title` | yes | Non-empty view title. |
-| `renderer` | yes | One supported native renderer. |
-| `icon` | no | Material or asset icon. |
-| `order` | no | Ordering inside the container. |
-| `when` | no | Visibility condition. |
-
-Supported renderers:
-
-| Renderer | Intended data |
+| Event | Meaning |
 | --- | --- |
-| `native.tree` | Hierarchical file, resource, or category nodes. |
-| `native.virtualList` | Large or lazily loaded flat lists. |
-| `native.table` | Rows with declared columns, sorting, and range loading. |
-| `native.form` | General component-tree UI and form fields. |
-| `native.markdown` | Markdown content and link activation. |
-| `native.log` | Appendable timestamped log entries. |
-| `native.outline` | Document symbols with kind, detail, and source position. |
-| `native.variableInspector` | Runtime scopes, values, lazy children, and paging. |
+| `onStartup` | Launch with the IDE. `manifest.auto_start` is true when present. |
+| `onView:<view id>` | Launch when that contributed view is first shown. |
+| `onCommand:<command id>` | Launch when that contributed command runs. |
+| `onLanguage:<language id>` | Launch when a document of that language opens. Language ids match `^[A-Za-z0-9][A-Za-z0-9_+.-]*$`. |
 
-Example:
-
-```toml
-[[contributes.views]]
-id = "acme.python-tools.outline"
-container = "acme.python-tools"
-title = "Outline"
-renderer = "native.outline"
-icon = { material = "account_tree_outlined" }
-order = 10
-when = "editor.language == 'python' && editor.hasDocument"
-```
-
-The renderer is a contract. Match it to the view facade and node types described in `ui-views.md`.
-
-## Commands
-
-Fields:
-
-| Field | Required | Purpose |
-| --- | --- | --- |
-| `id` | yes | Namespaced command ID registered with `plugin.commands`. |
-| `title` | yes | Command palette/menu label. |
-| `icon` | no | Material or asset icon. |
-| `order` | no | Ordering where commands are presented. |
-| `when` | no | Enablement condition. |
-
-Example:
-
-```toml
-[[contributes.commands]]
-id = "acme.python-tools.refresh"
-title = "Refresh Outline"
-icon = { material = "refresh" }
-when = "editor.language == 'python' && editor.hasDocument"
-```
-
-Declare `onCommand:acme.python-tools.refresh` when executing this command should activate an otherwise inactive plugin. Register the same exact ID in Python.
-
-## Menus
-
-Fields:
-
-| Field | Required | Purpose |
-| --- | --- | --- |
-| `location` | yes | One supported menu surface. |
-| `command` | yes | Command ID declared in this manifest. |
-| `view` | no | View ID for view-scoped locations. |
-| `group` | no | Non-empty grouping label; group names are plugin-defined. |
-| `order` | no | Ordering inside the location/group. |
-| `when` | no | Visibility condition for the menu entry. |
-
-Locations:
-
-- `view/title`: action in a contributed view title bar; set `view`.
-- `view/context`: action in the context menu of a contributed view; set `view`.
-- `navigation/context`: action in a navigation container context menu.
-- `commandPalette`: globally discoverable command palette entry.
-
-Example:
-
-```toml
-[[contributes.menus]]
-location = "view/title"
-view = "acme.python-tools.outline"
-command = "acme.python-tools.refresh"
-group = "navigation"
-order = 10
-when = "editor.hasDocument"
-```
-
-The menu's `when` controls visibility. The referenced command's `when` controls enablement, so a visible menu can be disabled when the command condition is false.
-
-## Configuration
-
-Manifest configuration is plugin-owned user configuration. It is separate from `plugin.settings`, which accesses global IDE settings.
-
-Fields:
-
-| Field | Required | Purpose |
-| --- | --- | --- |
-| `id` | yes | Namespaced configuration ID used by `plugin.configuration`. |
-| `title` | yes | User-facing setting label. |
-| `type` | yes | `string`, `integer`, `number`, `boolean`, or `array`. |
-| `description` | no | User-facing explanation. |
-| `default` | no | JSON-compatible default matching `type`; `null` is permitted. |
-| `enum` | no | Non-null JSON-compatible choices matching `type`. |
-| `order` | no | Ordering in the settings UI. |
-| `when` | no | Visibility condition. |
-
-Rules:
-
-- A non-null default must match the declared type.
-- Every enum value must match the type and cannot be null.
-- If both a non-null default and enum are present, the default must occur in the enum.
-- Integers must fit a signed 64-bit value; numeric values must be finite.
-- Arrays and nested values must be JSON-compatible. TOML dates and other non-JSON objects are invalid.
-
-Examples:
-
-```toml
-[[contributes.configuration]]
-id = "acme.python-tools.showPrivate"
-title = "Show Private Variables"
-type = "boolean"
-description = "Include names beginning with an underscore"
-default = false
-order = 10
-
-[[contributes.configuration]]
-id = "acme.python-tools.sortMode"
-title = "Outline Sort Mode"
-type = "string"
-default = "source"
-enum = ["source", "name", "kind"]
-order = 20
-```
-
-Read, write, list, and subscribe through `plugin.configuration`; see `sdk-operations.md` for exact calls and callback behavior.
-
-## Icons and Assets
-
-Plugin package icons require both forms:
-
-```toml
-icons = { full = "assets/icon.png", monochrome = "assets/icon-mono.png" }
-```
-
-Contribution icons use exactly one source:
-
-```toml
-icon = { material = "refresh" }
-icon = { asset = "assets/actions/refresh.png" }
-```
-
-Asset constraints:
-
-- Start with `assets/`.
-- Use `/`, not `\`.
-- Stay below the plugin's assets directory; do not use absolute paths, drive prefixes, `..`, or NUL characters.
-- Refer to a packaged file.
-- Use `Icons.<name>` in Python for component and renderer icons; do not pass arbitrary icon strings.
-
-## Activation Events
-
-Supported forms:
-
-| Event | Effect |
-| --- | --- |
-| `onStartup` | Start during plugin activation scanning. Use for an always-on service or conventional data contribution. |
-| `onView:<view-id>` | Start when the declared view is opened. |
-| `onCommand:<command-id>` | Start before the declared command executes. |
-| `onLanguage:<language-id>` | Valid language activation declaration. Use only when the target PyriteIDE integration initiates language activation; do not make it the sole path when broader compatibility matters. |
-
-Events must be unique. `onView` and `onCommand` targets must exist in the same manifest. Language IDs may contain letters, digits, `_`, `+`, `.`, and `-`.
-
-Typical choices:
-
-- UI plugin: one `onView` per independently activatable view, plus `onCommand` for commands that must work before a view opens.
-- Service plugin: `onStartup` for a continuous background service, or command/view activation when startup work is unnecessary.
-- Data plugin: one-shot `on_contribute`; `onStartup` communicates intent even though data plugins are managed as contributions.
+View and command targets must be declared in this same manifest. Duplicates are
+rejected. A plugin with no activation event relies on the host's default policy,
+which is why most templates list at least one.
 
 ## Permissions
 
-Declare only supported strings:
+Every permission is `resource.action`. Calls fail with `permission_denied` when the
+matching permission is absent, so declare exactly what the code uses. The mapping
+below is the host's own (`pyrite-ide/lib/core/sdk/permissions.dart`), which is what
+actually decides — the SDK does not enforce anything client-side.
 
-| Permission | Allows |
+| Permission | Unlocks |
 | --- | --- |
-| `ui.view` | Contributed view operations and clipboard writes. |
-| `ui.navigate` | Reserved navigation capability; do not add it unless a public operation requires it. |
-| `ui.notify` | `plugin.message` notifications. |
-| `file.read` | Workspace/local file queries and reads. |
-| `file.write` | File creation, mutation, transfer, and write operations; write authorization also satisfies reads for this resource. |
-| `board.read` | Device-board filesystem queries and reads. |
-| `board.write` | Device-board mutation and transfer; write authorization also satisfies reads. |
-| `editor.read` | Editor text, selection, search, tab queries, documents, and symbols. |
-| `editor.write` | Editor mutations, reveal/open/close, and decorations; write authorization also satisfies reads. |
-| `persistence.read` | Read plugin-private persisted values. |
-| `persistence.write` | Set/delete/clear plugin-private data; write authorization also satisfies reads. |
-| `tab.create` | Create a tab instance of a contributed view. |
-| `tab.manage` | Manage plugin tabs when a public management operation is available. |
-| `settings.read` | Read global IDE settings and manifest configuration values. |
-| `settings.write` | Change global IDE settings and manifest configuration values; write authorization also satisfies reads. |
-| `serial.read` | List/status/read serial connections. |
-| `serial.write` | Connect, send, execute, reset, and change serial behavior; write authorization also satisfies reads. |
-| `data.read` | Read themes, localization bundles, and stubs providers. |
-| `data.write` | Contribute/register/revoke theme, localization, and stubs data; write authorization also satisfies reads. |
-| `dialog.show` | Open host dialogs such as folder selection. |
-| `runtime.inspect` | Query runtime sessions, scopes, variables, children, and object information. |
+| `ui.view` | `clipboard.set_text`. Also the umbrella most UI plugins declare, even though view-model calls are public (see below). |
+| `ui.navigate` | Accepted by the validator and declared by templates; the current host does not gate route ops on it. |
+| `ui.notify` | `message.show/info/success/warning/error` |
+| `file.read` | `file.get_file_list`, `get_root_dir`, `read_file`, `exists`, `is_file`, `is_directory`, `get_focus_file_node`, `get_focus_folder_node`, `get_unique_name`, `open_file`, `open_folder`, `upload_file`, `upload_selected_local_file_item` |
+| `file.write` | `file.write_file`, `create_file`, `create_folder`, `delete`, `rename`, `copy_file`, `move_file`, `save_current_file`, `save_current_file_as` |
+| `board.read` | `board.get_dir_list`, `get_root_dir`, `read_file`, `exists`, `is_file`, `is_directory`, `get_focus_*`, `get_corresponding_file_path`, `open_file`, `download_file`, `download_selected_board_item` |
+| `board.write` | `board.write_file`, `delete_file`, `delete_folder`, `rename` |
+| `editor.read` | `editor.get_text`, `get_line_count`, `get_line_text`, `get_selected_text`, `get_cursor_position`, `get_selection`, `can_undo`, `can_redo`, `find`, `find_regex`, `clear_search`, `copy`; `documents.get_active/get/symbols/get_selection` |
+| `editor.write` | `editor.set_text`, `insert_text`, `replace_range`, `clear`, `set_cursor_position`, `set_selection`, `select_all`, `go_to_line`, `undo`, `redo`, `cut`, `paste`, `open_file`, `set_ghost_text`, `clear_ghost_text`, `scroll_to_line`; **`documents.reveal`** |
+| `editor.keys` | `editor.capture_keys` / `release_keys` (key hijacking) |
+| `persistence.read` | `persistence.get`, `list_groups`, `list_keys` |
+| `persistence.write` | `persistence.set`, `delete`, `clear` |
+| `tab.create` | `views.open(..., placement=<tab>)` (`sdk.tab.create_view`) |
+| `tab.manage` | `editor_tabs.list/activate/close` |
+| `settings.read` | `settings.get`, `settings.list`, grouped `settings.*.get_*` |
+| `settings.write` | `settings.set`, grouped `settings.*.set_*` |
+| `serial.read` | `serial.list_ports`, `get_status`, `read` |
+| `serial.write` | `serial.connect/disconnect/send/send_command/run_python/hardware_reset`, `set_baud_rate`, `set_auto_reconnect` |
+| `data.read` | `theme.get/list`, `i18n.get/list`, `stubs.get/list/resolve_layers`, `lsp.get/list` |
+| `data.write` | `theme.contribute/register_runtime/revoke`, `i18n.*`, `stubs.*`, `lsp.*` |
+| `dialog.show` | `dialog.open_file/open_files/open_folder` |
+| `runtime.inspect` | `runtime.sessions/state/scopes/variables/children/object_info` |
 
-There are no broad `ui`, `file`, or `data` permissions in Manifest v2. Use dotted action names exactly.
+Public in the host — no permission needed: `sdk.view.open/snapshot/patch/close/focus`,
+`sdk.view.route.*`, `sdk.view.component.invoke`, `sdk.configuration.*`,
+`sdk.env.get`, `sdk.path.request`, `sdk.events.subscribe/unsubscribe`. The reasoning
+is that a plugin managing its own view model, its own routes, or its own declared
+configuration is not touching anything the user has not already granted by
+installing it. Event subscriptions are allowed to reach the bus, but the bus still
+enforces per-topic permissions.
 
-## Platforms
+Permissions are declared, not requested at runtime: the IDE surfaces them in the
+plugin's permission monitor, and the user installs with them or not at all. Never
+widen a permission to make an unrelated bug disappear.
 
-Allowed values are:
+## `contributes`
 
-```toml
-platforms = ["windows", "linux", "macos", "android"]
+### `[[contributes.navigation_containers]]`
+
+The sidebar entry a UI plugin hangs off. A `ui` manifest must declare at least one.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `id` | string | — | May be the bare plugin id, or `<plugin id>.something`. |
+| `title` | string | — | Non-blank. |
+| `icon` | table | — | `{ material = "…" }` or `{ asset = "assets/…" }`. |
+| `location` | string | `"primary"` | `primary` or `secondary`. |
+| `order` | int | `0` | Signed 64-bit. |
+| `when` | string | — | Visibility expression. |
+
+### `[[contributes.views]]`
+
+A renderable slot inside a container.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `id` | string | — | Must start with `<plugin id>.`. |
+| `container` | string | — | Must match a declared navigation container id. |
+| `title` | string | — | Non-blank. |
+| `renderer` | string | — | Allowlist below. |
+| `icon` | table | — | Material or asset. |
+| `order` | int | `0` | |
+| `when` | string | — | |
+
+Renderer allowlist (anything else, including `rfw` and `rfw.*`, is rejected):
+
+`native.tree`, `native.virtualList`, `native.table`, `native.form`,
+`native.markdown`, `native.log`, `native.outline`, `native.variableInspector`.
+
+The renderer is a promise about the data shape you will send. `native.tree` expects
+tree nodes, `native.table` expects columns plus rows, and so on — see
+`views-and-renderers.md`. `native.form` is the generic container: it accepts either
+a component tree (snapshot) or form fields (typed facade).
+
+### `[[contributes.commands]]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `id` | string | — | Must start with `<plugin id>.`. |
+| `title` | string | — | Shown in the palette. |
+| `icon` | table | — | |
+| `order` | int | `0` | |
+| `when` | string | — | |
+
+Declaring a command only makes it visible. It does nothing until
+`plugin.commands.register(id, handler)` runs in `on_start`. The handler is called as
+`handler(args=<dict>, context=<dict>)` and may be `async def`; its return value is
+sent back to the host as the command result.
+
+### `[[contributes.menus]]`
+
+Places a command in a host menu.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `location` | string | — | `view/title`, `view/context`, `navigation/context`, `commandPalette`. |
+| `command` | string | — | Must match a declared command id. |
+| `view` | string | — | Required in practice for `view/title` and `view/context`; must match a declared view id. |
+| `group` | string | — | Free-form grouping key. |
+| `order` | int | `0` | |
+| `when` | string | — | |
+
+### `[[contributes.configuration]]`
+
+Declarative settings the host renders and stores per plugin.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `id` | string | — | Must start with `<plugin id>.`. |
+| `title` | string | — | |
+| `type` | string | — | `string`, `integer`, `number`, `boolean`, `array`. |
+| `description` | string | `""` | |
+| `default` | any | `null` | Must be JSON and match `type`; must appear in `enum` when `enum` is set. |
+| `enum` | array | `[]` | Every entry must match `type` and be non-null. |
+| `order` | int | `0` | |
+| `when` | string | — | |
+
+Read them back with fully-qualified ids:
+
+```python
+def on_start(self):
+    self.configuration.list(callback=self._on_config)
+    self.configuration.on_changed(self._on_config_changed)
+
+def _on_config(self, data=None, error=None, **_):
+    for item in data or []:                     # [{"id": "acme.tools.verbose", "value": False}, …]
+        key = item["id"].removeprefix("acme.tools.")
+        self._config[key] = item["value"]
+
+def _on_config_changed(self, event):
+    key = str(event.get("id", "")).removeprefix("acme.tools.")
+    self._config[key] = event.get("value")
 ```
 
-Use lowercase names. List only platforms the plugin code, dependencies, assets, and external integrations actually support. Platform declarations are compatibility metadata and validation input; plugin code must still handle environment-specific behavior through `plugin.env` when necessary.
+`configuration.get(id)` / `.set(id, value)` use the same fully-qualified id.
 
-## `when` Expressions
+## `when` expressions
 
-Available context keys:
+A deliberately small boolean language evaluated by the host against live context.
+It is validated at install time, so a bad expression fails the manifest.
 
-- `editor.language`
-- `editor.hasDocument`
-- `runtime.language`
-- `runtime.state`
-- `device.connected`
-- `workspace.opened`
-- `plugin.enabled`
-- `view.active`
-
-Operators and precedence:
-
-1. `!`
-2. `&&`
-3. `||`
-
-Use parentheses to override precedence. Comparisons support only `==` and `!=`. Literals may be quoted strings, booleans, integers, or decimal numbers.
-
-Valid examples:
-
-```toml
-when = "workspace.opened && editor.hasDocument"
-when = "editor.language == 'python' && runtime.state != 'running'"
-when = "device.connected || (runtime.language == 'python' && !editor.hasDocument)"
+```
+runtime.language == 'python' && (workspace.opened || device.connected)
+!view.active && editor.hasDocument
 ```
 
-Unsupported constructs include regex operators, `<`, `>`, `in`, `contains`, function calls, and null literals. Keep expressions below 4096 UTF-16 code units, 256 tokens, and 64 nesting levels. A bare key uses truthiness: false, zero, an empty string, or a missing value is false.
+- Allowed keys: `editor.language`, `editor.hasDocument`, `runtime.language`,
+  `runtime.state`, `device.connected`, `workspace.opened`, `plugin.enabled`,
+  `view.active`.
+- Operators: `&&`, `||`, `!`, `==`, `!=`, parentheses.
+- Literals: single- or double-quoted strings, integers/decimals, `true`, `false`.
+- Limits: 4096 UTF-16 code units, 256 tokens, 64 levels of nesting.
+- A bare key (no comparison) is a truthiness test, e.g. `workspace.opened`.
 
-## Complete Example
+## Icons and assets
+
+```toml
+icons = { full = "assets/icon.png", monochrome = "assets/icon-mono.png" }
+
+[[contributes.commands]]
+id = "acme.tools.refresh"
+title = "Refresh"
+icon = { material = "refresh" }
+```
+
+- `{ material = "…" }` must be a name from the SDK's Material table
+  (`pyrite_sdk.api.material_icons.MATERIAL_ICON_CODES`, 8825 snake_case names).
+  In code the same names are reachable as `Icons.refresh`.
+- `{ asset = "assets/…" }` must be a forward-slash relative path below `assets/`,
+  must exist as a regular file, and must not escape the plugin directory via `..`
+  or a symlink.
+- Exactly one source per icon; both or neither is an error.
+- Top-level `[icons]` is the plugin's own icon (full + monochrome), not a
+  contribution icon.
+
+## Complete examples
+
+### UI plugin
 
 ```toml
 manifest_version = 2
-id = "acme.python-tools"
+id = "python-tools"
 name = "Python Tools"
-version = "1.0.0"
+version = "1.1.0"
 type = "ui"
 protocol_version = 1
 python_version = "3.14"
-author = "Acme"
-description = "Outline and runtime inspection tools"
-icons = { full = "assets/icon.png", monochrome = "assets/icon-mono.png" }
+author = "PyriteIDE"
+description = "Python outline and variable inspection tools"
 activation_events = [
-  "onView:acme.python-tools.outline",
-  "onView:acme.python-tools.variables",
-  "onCommand:acme.python-tools.refresh",
+  "onView:python-tools.outline",
+  "onView:python-tools.variables",
+  "onCommand:python-tools.refreshVariables",
 ]
-permissions = [
-  "ui.view",
-  "editor.read",
-  "settings.read",
-  "runtime.inspect",
-]
+permissions = ["ui.view", "editor.read", "settings.read", "runtime.inspect"]
 platforms = ["windows", "linux", "macos", "android"]
 
 [[contributes.navigation_containers]]
-id = "acme.python-tools"
+id = "python-tools"
 title = "Python"
 icon = { material = "code" }
 location = "primary"
 order = 100
 
 [[contributes.views]]
-id = "acme.python-tools.outline"
-container = "acme.python-tools"
+id = "python-tools.outline"
+container = "python-tools"
 title = "Outline"
 renderer = "native.outline"
 icon = { material = "account_tree_outlined" }
 order = 10
 
 [[contributes.views]]
-id = "acme.python-tools.variables"
-container = "acme.python-tools"
+id = "python-tools.variables"
+container = "python-tools"
 title = "Variables"
 renderer = "native.variableInspector"
 icon = { material = "data_object" }
@@ -419,37 +290,125 @@ order = 20
 when = "runtime.language == 'python' && workspace.opened"
 
 [[contributes.commands]]
-id = "acme.python-tools.refresh"
+id = "python-tools.refreshVariables"
 title = "Refresh Variables"
 icon = { material = "refresh" }
 when = "runtime.language == 'python' && workspace.opened"
 
 [[contributes.menus]]
 location = "view/title"
-view = "acme.python-tools.variables"
-command = "acme.python-tools.refresh"
+view = "python-tools.variables"
+command = "python-tools.refreshVariables"
 group = "navigation"
-order = 10
-when = "runtime.language == 'python' && workspace.opened"
 
 [[contributes.configuration]]
-id = "acme.python-tools.showPrivate"
+id = "python-tools.showPrivate"
 title = "Show Private Variables"
 type = "boolean"
 description = "Include private names in the variable inspector"
 default = false
-order = 20
-when = "runtime.language == 'python' && workspace.opened"
 ```
 
-## Failure Checklist
+### Service plugin
 
-- Confirm all six required top-level fields are explicit.
-- Confirm `type` is `ui`, `service`, or `data` and protocol is `1`.
-- Confirm a UI plugin declares a navigation container.
-- Confirm every contribution ID uses the exact plugin namespace and is unique case-insensitively.
-- Confirm view containers, menu commands, menu views, and activation targets exist.
-- Confirm renderers, permissions, platforms, menu locations, configuration types, and context keys use the supported spellings.
-- Confirm defaults and enum values match the declared configuration type.
-- Confirm icon assets exist below `assets/` and Material icon names are valid.
-- Parse and validate the manifest before packaging; syntax-only TOML parsing does not catch semantic errors.
+```toml
+manifest_version = 2
+id = "fim-completion"
+name = "FIM Completion"
+version = "1.0.0"
+type = "service"
+protocol_version = 1
+python_version = "3.14"
+author = "Pyrite Project"
+description = "Inline fill-in-the-middle completion with ghost text"
+activation_events = ["onStartup"]
+permissions = ["editor.read", "editor.write", "editor.keys"]
+platforms = ["linux", "macos", "windows", "android"]
+
+[[contributes.configuration]]
+id = "fim-completion.enabled"
+title = "Enable FIM"
+type = "boolean"
+default = true
+order = 1
+
+[[contributes.configuration]]
+id = "fim-completion.model"
+title = "Model"
+type = "string"
+default = "deepseek-chat"
+order = 2
+
+[[contributes.configuration]]
+id = "fim-completion.api_format"
+title = "API format"
+type = "string"
+default = "completions"
+enum = ["completions", "chat"]
+order = 3
+```
+
+A service plugin needs no container and no view — it has no `views` attribute at all.
+
+### Data plugin
+
+```toml
+manifest_version = 2
+id = "nord-theme"
+name = "Nord Theme"
+version = "1.0.0"
+type = "data"
+protocol_version = 1
+python_version = "3.14"
+author = "Pyrite Project"
+activation_events = ["onStartup"]
+permissions = ["data.write"]
+platforms = ["linux", "macos", "windows", "android"]
+```
+
+```python
+from pyrite_sdk.core.plugin import DataPlugin
+
+
+class NordThemePlugin(DataPlugin):
+    def on_contribute(self) -> None:
+        self.theme.contribute(
+            "nord",
+            {
+                "color.primary": "#5E81AC",
+                "color.onPrimary": "#ECEFF4",
+                "color.surface": "#ECEFF4",
+                "color.onSurface": "#2E3440",
+                "dark.color.primary": "#88C0D0",
+                "dark.color.surface": "#2E3440",
+                "dark.color.onSurface": "#ECEFF4",
+            },
+        )
+
+
+plugin = NordThemePlugin()
+
+if __name__ == "__main__":
+    plugin.run_once()
+```
+
+`DataPlugin.on_start()` calls `on_contribute()` and then stops the bridge once the
+contribution round-trips are answered — that is why it exits on its own.
+
+## Common manifest mistakes
+
+| Mistake | Error code |
+| --- | --- |
+| `type = "ui"` with no navigation container | `manifest_missing_navigation_container` |
+| Contribution id without the plugin prefix (`main` instead of `acme.tools.main`) | `manifest_invalid_contribution_id` |
+| Same id used for a command and a configuration entry | `manifest_contribution_conflict` |
+| `renderer = "rfw.page"` | `manifest_rfw_renderer_unsupported` |
+| `renderer = "native.table"` typo (`native.datatable`) | `manifest_unknown_renderer` |
+| `when = "runtime.language === 'python'"` | `manifest_invalid_when` |
+| `icon = { material = "Refresh" }` (wrong case) | `manifest_unknown_icon` |
+| `icon = { material = "refresh", asset = "assets/r.png" }` | `manifest_invalid_schema` |
+| `permissions = ["editor.all"]` | `manifest_invalid_permission` |
+| `activation_events = ["onView:acme.other"]` (undeclared view) | `manifest_invalid_activation_event` |
+| `default = "8"` for `type = "integer"` | `manifest_invalid_schema` |
+| `default = 3` with `enum = [1, 2]` | `manifest_invalid_schema` |
+| Any unknown key anywhere | `manifest_invalid_schema` |
